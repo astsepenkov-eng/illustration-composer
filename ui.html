@@ -24,6 +24,7 @@ legend { padding:0 4px; font-weight:550 }
 #subjects { max-height:165px; overflow:auto }
 .subject { display:grid; grid-template-columns:1fr 1fr; align-items:center; gap:8px }
 .subject select { margin:3px 0 }
+.add-subject { margin-top:8px }
 #previewStatus { margin:2px 0 4px }
 small { display:block; color:var(--figma-color-text-secondary,#555) }
 details { margin-top:9px; padding:8px 10px; border:1px solid var(--figma-color-border,#bbb); border-radius:6px }
@@ -81,11 +82,14 @@ details .help { margin:6px 0 9px }
     <button id="formatAction" disabled>Применить формат</button>
     <button id="paletteAction" disabled>Применить палитру</button>
   </div>
-  <div class="row">
-    <label>Предмет <select id="subject"></select></label>
-    <label>Роль <select id="addRole"><option value="main">Главный</option><option value="background">Фоновый</option></select></label>
-  </div>
-  <button id="add" disabled>Добавить в выбранную композицию</button>
+  <fieldset class="add-subject">
+    <legend>Добавить предмет</legend>
+    <div class="row">
+      <label>Предмет <select id="subject"></select></label>
+      <label>Роль <select id="addRole"><option value="main">Главный</option><option value="background">Фоновый</option></select></label>
+    </div>
+    <button id="add" disabled>Добавить в выбранную композицию</button>
+  </fieldset>
   <button id="role" disabled>Сменить роль выделенного предмета</button>
 </details>
 <details>

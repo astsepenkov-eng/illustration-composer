@@ -258,6 +258,15 @@ function findItemPosition(frameWidth,frameHeight,width,height,occupied) {
   }
   return best;
 }
+function planItemPlacement(frameWidth,frameHeight,width,height,occupied) {
+  const position=findItemPosition(frameWidth,frameHeight,width,height,occupied);
+  if (position) return {...position,frameWidth,frameHeight};
+  const padding=24;
+  const nextWidth=Math.max(frameWidth,width+2*padding);
+  const bottom=Math.max(frameHeight,...occupied.map(item=>item.y+item.height));
+  const y=Math.ceil(bottom+padding);
+  return {x:(nextWidth-width)/2,y,frameWidth:Math.ceil(nextWidth),frameHeight:Math.ceil(y+height+padding)};
+}
 function bytesToText(bytes) {
   let encoded='';
   for (const byte of bytes) encoded+='%'+byte.toString(16).padStart(2,'0');
@@ -372,15 +381,19 @@ function register() {
     const occupied=frame.children.filter(child=>child.visible).map(itemBounds);
     const original=source(name,size,'main');
     const factor=scale||1;
-    const position=findItemPosition(frame.width,frame.height,original.width*factor,original.height*factor,occupied);
-    if (!position) throw Error('В композиции нет свободного места для этого предмета. Освободите место или добавьте его в запрос и соберите новую композицию.');
+    const position=planItemPlacement(frame.width,frame.height,original.width*factor,original.height*factor,occupied);
+    const expanded=position.frameWidth!==frame.width || position.frameHeight!==frame.height;
     const node=copy(name,size,'main',palette,frame);
     try {
       node.rescale(factor);
       node.x=position.x;
       node.y=position.y;
+      if (expanded) {
+        frame.resizeWithoutConstraints(position.frameWidth,position.frameHeight);
+        frame.name=frame.name.replace(/ · \d+ × \d+$/, ' · '+position.frameWidth+' × '+position.frameHeight);
+      }
       figma.currentPage.selection=[node];
-      post('status',{text:'Добавлен предмет: '+name+'.'});
+      post('status',{text:'Добавлен предмет: '+name+'.'+(expanded?' Фрейм расширен до '+position.frameWidth+' × '+position.frameHeight+'.':'')});
     } catch (error) {
       node.remove();
       throw error;
@@ -467,4 +480,4 @@ function register() {
   };
 }
 if (typeof figma!=='undefined') register();
-if (typeof module!=='undefined') module.exports={indexLibrary,matchQuery,layout,validatePalette,recolor,schemes,bytesToText,repairSvgIds,freePosition,readLibraryPalettes,findItemPosition,itemBounds};
+if (typeof module!=='undefined') module.exports={indexLibrary,matchQuery,layout,validatePalette,recolor,schemes,bytesToText,repairSvgIds,freePosition,readLibraryPalettes,findItemPosition,itemBounds,planItemPlacement};

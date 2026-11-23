@@ -1,11 +1,11 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { findItemPosition,itemBounds } = require('./code.js');
+const { findItemPosition,itemBounds,planItemPlacement } = require('./code.js');
 const { indexLibrary, matchQuery, layout, validatePalette, recolor, schemes, bytesToText, repairSvgIds, freePosition, readLibraryPalettes } = require('./code.js');
 
 function node(type,name,y,children=[],width=50,height=40) {
   return {
-    type,name,children,visible:true,id:name,
+    type,name,children,width,height,visible:true,id:name,
     absoluteBoundingBox:{x:0,y,width,height},
     findOne(test) {
       for (const child of children) {
@@ -71,6 +71,12 @@ test('added objects avoid rotated layers and report a full frame',()=>{
   assert.equal(next.y,120);
   assert.equal(findItemPosition(100,100,60,40,[{x:0,y:0,width:100,height:100}]),undefined);
 });
+test('a full frame grows downward and only widens for an oversized object',()=>{
+  const occupied=[{x:0,y:0,width:700,height:1050}];
+  assert.deepEqual(planItemPlacement(700,1050,180,100,occupied),{x:260,y:1074,frameWidth:700,frameHeight:1198});
+  assert.deepEqual(planItemPlacement(700,1050,800,100,occupied),{x:24,y:1074,frameWidth:848,frameHeight:1198});
+  assert.deepEqual(planItemPlacement(700,1050,180,100,[]),{x:260,y:475,frameWidth:700,frameHeight:1050});
+});
 test('reads exact swatches from separate background and object columns',()=>{
   const children=[];
   for (let col=0;col<6;col++) {
@@ -131,6 +137,7 @@ test('plugin messages scan, assemble, recolor, change role and export',async()=>
       setPluginData(key,value) { data.set(key,value); },
       getPluginData(key) { return data.get(key)||''; },
       resize(w,h) { this.width=w; this.height=h; },
+      resizeWithoutConstraints(w,h) { this.resize(w,h); },
       rescale(factor) { this.width*=factor; this.height*=factor; },
       appendChild(child) { this.insertChild(this.children.length,child); },
       insertChild(index,child) { child.remove(); this.children.splice(index,0,child); child.parent=this; },
@@ -174,5 +181,13 @@ test('plugin messages scan, assemble, recolor, change role and export',async()=>
   assert.equal(frame.children.length,2);
   await figma.ui.onmessage({type:'export'});
   assert.equal(log.find(msg=>msg.type==='svg').raw,'<svg><g id="book"/><g id="phone"/></svg>');
+  const existing=frame.children[0];
+  existing.width=frame.width;
+  existing.height=frame.height;
+  const previousHeight=frame.height;
+  await figma.ui.onmessage({type:'add',name:'Телефон'});
+  assert.ok(frame.height>previousHeight);
+  assert.equal(existing.height,previousHeight);
+  assert.ok(workPage.selection[0].y>previousHeight);
   assert.equal(log.filter(msg=>msg.error).length,0);
 });

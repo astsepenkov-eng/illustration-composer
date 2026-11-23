@@ -1,0 +1,121 @@
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const { indexLibrary, matchQuery, layout, validatePalette, recolor, schemes, bytesToText } = require('./code.js');
+
+function node(type,name,y,children=[],width=50,height=40) {
+  return {
+    type,name,children,visible:true,id:name,
+    absoluteBoundingBox:{x:0,y,width,height},
+    findOne(test) {
+      for (const child of children) {
+        if (test(child)) return child;
+        const match=child.findOne(test);
+        if (match) return match;
+      }
+    }
+  };
+}
+function label(characters,y) {
+  return {...node('TEXT',characters,y),characters};
+}
+function section(size) {
+  return node('SECTION','Размер '+size,0,[
+    label('Главные объекты',100),
+    node('GROUP','Group 2136136335',120,[node('GROUP','Книга',120)]),
+    node('GROUP','Телефон',120),
+    label('Фоновые объекты',200),
+    node('GROUP','Group 2136136341',220,[node('GROUP','Книга',220)]),
+    node('GROUP','Телефон',220)
+  ]);
+}
+test('catalogue links both roles and sizes and preserves outer wrappers',()=>{
+  const page=node('PAGE','Библиотека компонентов',0,[section('L'),section('S')]);
+  const {variants,issues}=indexLibrary(page);
+  assert.equal(variants.size,8);
+  assert.equal(variants.get('Книга|S|main').name,'Group 2136136335');
+  assert.equal(variants.get('Книга|S|background').name,'Group 2136136341');
+  assert.ok(issues.some(issue=>issue.includes('Лампа')));
+});
+test('direct names and an unseen title produce eligible objects',()=>{
+  assert.deepEqual(matchQuery('Книга, телефон','names',['Книга','Телефон']),['Книга','Телефон']);
+  assert.deepEqual(matchQuery('Идеи всегда на связи','meaning',['Лампа','Телефон','Книга']),['Телефон','Лампа']);
+  assert.throws(()=>matchQuery('океан','meaning',['Книга','Телефон']),/не найдены/);
+});
+test('layout shares a scale across distinct source dimensions',()=>{
+  for (const [w,h] of [[1000,1000],[1200,630],[700,1050]]) {
+    const items=[{width:1446,height:977},{width:797,height:462}];
+    const result=layout(items,w,h);
+    assert.equal(result[0].factor,result[1].factor);
+    result.forEach((p,i)=>{
+      assert.ok(p.x>=0 && p.y>=0);
+      assert.ok(p.x+items[i].width*p.factor<w);
+      assert.ok(p.y+items[i].height*p.factor<h);
+    });
+  }
+});
+test('background recolor maps all visible fills and strokes to background shades',()=>{
+  const palette=validatePalette(require('./palette-example.json'));
+  const child={type:'VECTOR',fills:[{type:'SOLID',color:{r:1,g:0,b:0}}],strokes:[{type:'SOLID',color:{r:0,g:0,b:0}}]};
+  recolor({type:'GROUP',children:[child]},'background',palette);
+  const hex=c=>'#'+[c.r,c.g,c.b].map(n=>Math.round(n*255).toString(16).padStart(2,'0')).join('').toUpperCase();
+  assert.ok([...child.fills,...child.strokes].every(p=>palette.background.includes(hex(p.color))));
+  assert.throws(()=>validatePalette({...schemes[0],background:['red']}),/HEX/);
+});
+test('SVG text decoding preserves non-ASCII names',()=>{
+  const raw='<svg><g id="Книга"/></svg>';
+  assert.equal(bytesToText(Buffer.from(raw)),raw);
+});
+
+test('plugin messages scan, assemble, recolor, change role and export',async()=>{
+  const vm=require('node:vm');
+  const fs=require('node:fs');
+  const library=node('PAGE','Библиотека компонентов',0,[section('L'),section('S')]);
+  library.loadAsync=async()=>{};
+  const workPage={selection:[]};
+  const log=[];
+  function editable(name,type,width=50,height=40) {
+    const data=new Map();
+    return {
+      name,type,width,height,children:[],opacity:1,visible:true,relativeTransform:[[1,0,0],[0,1,0]],
+      fills:[{type:'SOLID',color:{r:0.6,g:0.5,b:0.9}}],
+      setPluginData(key,value) { data.set(key,value); },
+      getPluginData(key) { return data.get(key)||''; },
+      resize(w,h) { this.width=w; this.height=h; },
+      rescale(factor) { this.width*=factor; this.height*=factor; },
+      appendChild(child) { this.insertChild(this.children.length,child); },
+      insertChild(index,child) { child.remove(); this.children.splice(index,0,child); child.parent=this; },
+      remove() {
+        if (!this.parent) return;
+        const items=this.parent.children;
+        items.splice(items.indexOf(this),1);
+        this.parent=null;
+      },
+      async exportAsync() { return Buffer.from('<svg><g id="book"/><g id="phone"/></svg>'); }
+    };
+  }
+  for (const variant of indexLibrary(library).variants.values())
+    variant.clone=()=>editable(variant.name,'GROUP');
+  const figma={
+    root:{children:[library]},currentPage:workPage,showUI(){},
+    viewport:{center:{x:0,y:0},scrollAndZoomIntoView(){}},
+    ui:{postMessage(event){log.push(event);}},
+    createFrame(){return editable('Frame','FRAME');}
+  };
+  vm.runInNewContext(fs.readFileSync(require.resolve('./code.js'),'utf8'),{figma,__html__:''});
+  await figma.ui.onmessage({type:'scan'});
+  assert.equal(log.find(msg=>msg.type==='catalog').count,8);
+  const request={type:'build',query:'Книга, телефон',mode:'names',size:'S',format:'square',withBackground:true};
+  await figma.ui.onmessage(request);
+  const frame=workPage.selection[0];
+  assert.equal(frame.children.length,2);
+  assert.match(frame.children[0].name,/Телефон.*фон/);
+  workPage.selection=[frame.children[0]];
+  await figma.ui.onmessage({type:'role'});
+  assert.match(workPage.selection[0].name,/Телефон.*главный/);
+  await figma.ui.onmessage({type:'palette',palette:require('./palette-example.json')});
+  assert.equal(workPage.selection[0],frame);
+  assert.equal(frame.children.length,2);
+  await figma.ui.onmessage({type:'export'});
+  assert.equal(log.find(msg=>msg.type==='svg').raw,'<svg><g id="book"/><g id="phone"/></svg>');
+  assert.equal(log.filter(msg=>msg.error).length,0);
+});

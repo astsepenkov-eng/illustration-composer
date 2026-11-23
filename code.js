@@ -233,6 +233,31 @@ function freePosition(preferred,width,height,occupied) {
   }
   return {x,y};
 }
+function itemBounds(node) {
+  const [[a,b,x],[c,d,y]]=node.relativeTransform;
+  const xs=[x,x+a*node.width,x+b*node.height,x+a*node.width+b*node.height];
+  const ys=[y,y+c*node.width,y+d*node.height,y+c*node.width+d*node.height];
+  return {x:Math.min(...xs),y:Math.min(...ys),width:Math.max(...xs)-Math.min(...xs),height:Math.max(...ys)-Math.min(...ys)};
+}
+function findItemPosition(frameWidth,frameHeight,width,height,occupied) {
+  const gap=16;
+  const maxX=frameWidth-width-gap,maxY=frameHeight-height-gap;
+  const centerX=(frameWidth-width)/2,centerY=(frameHeight-height)/2;
+  const xs=new Set([gap,centerX,maxX]),ys=new Set([gap,centerY,maxY]);
+  for (const item of occupied) {
+    xs.add(item.x-width-gap); xs.add(item.x+item.width+gap);
+    ys.add(item.y-height-gap); ys.add(item.y+item.height+gap);
+  }
+  let best,bestDistance=Infinity;
+  for (const x of xs) for (const y of ys) {
+    if (x<gap || x>maxX || y<gap || y>maxY) continue;
+    if (occupied.some(item=>x+width+gap>item.x && x<item.x+item.width+gap &&
+      y+height+gap>item.y && y<item.y+item.height+gap)) continue;
+    const distance=(x-centerX)**2+(y-centerY)**2;
+    if (distance<bestDistance) {best={x,y};bestDistance=distance;}
+  }
+  return best;
+}
 function bytesToText(bytes) {
   let encoded='';
   for (const byte of bytes) encoded+='%'+byte.toString(16).padStart(2,'0');
@@ -256,13 +281,16 @@ function register() {
   let catalog;
   let busy=false;
   const post = (type,data) => figma.ui.postMessage({type,...data});
+  const availableNames = size => subjects.map(([name])=>name).filter(name=>catalog?.variants.has(slot(name,size,'main')));
   async function scan() {
     const page=figma.root.children.find(n=>normalize(n.name.trim())==='библиотека компонентов');
     if (!page) throw Error('В этом файле нужна страница «Библиотека компонентов» с секциями «Размер L» и «Размер S».');
     await page.loadAsync();
     catalog=indexLibrary(page);
     if (!catalog.palettes) catalog.issues.push('Образцы палитр не распознаны. Показаны резервные схемы.');
-    post('catalog',{count:catalog.variants.size,issues:catalog.issues,schemes:catalog.palettes||schemes,sourcePalettes:Boolean(catalog.palettes),names:subjects.filter(([name])=>['L','S'].some(size=>catalog.variants.has(slot(name,size,'main')))).map(([name])=>name)});
+    const namesBySize={L:availableNames('L'),S:availableNames('S')};
+    post('catalog',{count:catalog.variants.size,issues:catalog.issues,schemes:catalog.palettes||schemes,
+      sourcePalettes:Boolean(catalog.palettes),namesBySize,names:[...new Set([...namesBySize.L,...namesBySize.S])]});
   }
   function source(name,size,role) {
     const node=catalog?.variants.get(slot(name,size,role));
@@ -292,8 +320,7 @@ function register() {
   }
   function resolveSubjects({size,query,mode}) {
     if (!['L','S'].includes(size)) throw Error('Неизвестный размер.');
-    const available=subjects.map(([name])=>name).filter(name=>catalog?.variants.has(slot(name,size,'main')));
-    return matchQuery(query,mode,available).map(name=>({
+    return matchQuery(query,mode,availableNames(size)).map(name=>({
       name,background:catalog.variants.has(slot(name,size,'background'))
     }));
   }
@@ -342,13 +369,18 @@ function register() {
     const {size,palette,scale}=JSON.parse(frame.getPluginData('composition'));
     const name=subjectName(message.name);
     if (!name) throw Error('Выберите предмет из каталога.');
+    const occupied=frame.children.filter(child=>child.visible).map(itemBounds);
+    const original=source(name,size,'main');
+    const factor=scale||1;
+    const position=findItemPosition(frame.width,frame.height,original.width*factor,original.height*factor,occupied);
+    if (!position) throw Error('В композиции нет свободного места для этого предмета. Освободите место или добавьте его в запрос и соберите новую композицию.');
     const node=copy(name,size,'main',palette,frame);
     try {
-      node.rescale(scale||1);
-      node.x=(frame.width-node.width)/2;
-      node.y=(frame.height-node.height)/2;
+      node.rescale(factor);
+      node.x=position.x;
+      node.y=position.y;
       figma.currentPage.selection=[node];
-      post('status',{text:name+' добавлен. Перетащите предмет на нужное место.'});
+      post('status',{text:'Добавлен предмет: '+name+'.'});
     } catch (error) {
       node.remove();
       throw error;
@@ -435,4 +467,4 @@ function register() {
   };
 }
 if (typeof figma!=='undefined') register();
-if (typeof module!=='undefined') module.exports={indexLibrary,matchQuery,layout,validatePalette,recolor,schemes,bytesToText,repairSvgIds,freePosition,readLibraryPalettes};
+if (typeof module!=='undefined') module.exports={indexLibrary,matchQuery,layout,validatePalette,recolor,schemes,bytesToText,repairSvgIds,freePosition,readLibraryPalettes,findItemPosition,itemBounds};

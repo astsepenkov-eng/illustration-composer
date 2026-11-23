@@ -1,5 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { findItemPosition,itemBounds } = require('./code.js');
 const { indexLibrary, matchQuery, layout, validatePalette, recolor, schemes, bytesToText, repairSvgIds, freePosition, readLibraryPalettes } = require('./code.js');
 
 function node(type,name,y,children=[],width=50,height=40) {
@@ -61,6 +62,14 @@ test('new frame clears existing objects and preserves a free position',()=>{
   const occupied=[{x:50,y:100,width:500,height:600},{x:750,y:0,width:200,height:300}];
   assert.deepEqual(freePosition({x:100,y:100},300,400,occupied),{x:1046,y:100});
   assert.deepEqual(freePosition({x:100,y:1000},300,400,occupied),{x:100,y:1000});
+});
+test('added objects avoid rotated layers and report a full frame',()=>{
+  const rotated=itemBounds({width:100,height:60,relativeTransform:[[0,-1,210],[1,0,90]]});
+  assert.deepEqual(rotated,{x:150,y:90,width:60,height:100});
+  const next=findItemPosition(360,280,60,40,[rotated]);
+  assert.equal(next.x,74);
+  assert.equal(next.y,120);
+  assert.equal(findItemPosition(100,100,60,40,[{x:0,y:0,width:100,height:100}]),undefined);
 });
 test('reads exact swatches from separate background and object columns',()=>{
   const children=[];

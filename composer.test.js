@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { indexLibrary, matchQuery, layout, validatePalette, recolor, schemes, bytesToText } = require('./code.js');
+const { indexLibrary, matchQuery, layout, validatePalette, recolor, schemes, bytesToText, repairSvgIds } = require('./code.js');
 
 function node(type,name,y,children=[],width=50,height=40) {
   return {
@@ -64,6 +64,19 @@ test('background recolor maps all visible fills and strokes to background shades
 test('SVG text decoding preserves non-ASCII names',()=>{
   const raw='<svg><g id="Книга"/></svg>';
   assert.equal(bytesToText(Buffer.from(raw)),raw);
+  assert.equal(repairSvgIds(Buffer.from(raw).toString('latin1')),raw);
+  const escaped=Buffer.from(raw).toString('latin1').replace(/[\u0080-\u00ff]/g,char=>'&#'+char.charCodeAt(0)+';');
+  assert.equal(repairSvgIds(escaped),raw);
+  assert.equal(repairSvgIds(raw),raw);
+  assert.equal(repairSvgIds('<g id="café"/>'),'<g id="café"/>');
+});
+
+test('known source wrappers resolve without renaming Figma layers',()=>{
+  const source=section('S');
+  source.children.push(node('GROUP','Group 2136136336',140),node('GROUP','Group 2136136343',240));
+  const {variants}=indexLibrary(node('PAGE','Библиотека компонентов',0,[source]));
+  assert.equal(variants.get('Папка|S|main').name,'Group 2136136336');
+  assert.equal(variants.get('Ручка|S|background').name,'Group 2136136343');
 });
 
 test('plugin messages scan, assemble, recolor, change role and export',async()=>{

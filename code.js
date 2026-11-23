@@ -20,6 +20,12 @@ const slot = (name,size,role) => [name,size,role].join('|');
 const normalize = value => String(value).toLowerCase().replace(/ё/g,'е');
 const aliases = {'пазл':'Пазлы','цветы':'Растение','цветок':'Растение','букет':'Растение'};
 const subjectName = name => subjects.find(([label]) => normalize(label) === normalize(name))?.[0] || aliases[normalize(name)];
+const sourceGroupNames = {
+  'Group 2136136344':'Растение', 'Group 2136136347':'Растение',
+  'Group 2136136345':'Растение', 'Group 2136136346':'Растение',
+  'Group 2136136336':'Папка', 'Group 2136136342':'Папка',
+  'Group 2136136337':'Ручка', 'Group 2136136343':'Ручка'
+};
 const rgb = hex => ({r:parseInt(hex.slice(1,3),16)/255,g:parseInt(hex.slice(3,5),16)/255,b:parseInt(hex.slice(5,7),16)/255});
 const solid = hex => [{type:'SOLID',color:rgb(hex)}];
 const toHex = c => '#'+[c.r,c.g,c.b].map(n=>Math.round(n*255).toString(16).padStart(2,'0')).join('');
@@ -56,7 +62,7 @@ function indexLibrary(page) {
       const bounds = box(node);
       if (!node.visible || !isContainer(node) || bounds.y < mainY || /^фон$/i.test(node.name)) continue;
       const role = bounds.y >= backgroundY ? 'background' : 'main';
-      let name = subjectName(node.name);
+      let name = subjectName(node.name) || sourceGroupNames[node.name];
       if (!name) {
         const names = new Set();
         walk(node, child => { const label = subjectName(child.name); if (label) names.add(label); });
@@ -158,6 +164,19 @@ function bytesToText(bytes) {
   let encoded='';
   for (const byte of bytes) encoded+='%'+byte.toString(16).padStart(2,'0');
   return decodeURIComponent(encoded);
+}
+function repairSvgIds(svg) {
+  return svg.replace(/(\bid=")([^"]+)(")/g,(attribute,open,id,close)=>{
+    // Some Figma versions encode UTF-8 IDs as Latin-1 before writing the SVG.
+    const unpacked=id.replace(/&#(\d{1,3});/g,(entity,value)=>Number(value)<256?String.fromCharCode(Number(value)):entity);
+    if (!/[\u0080-\u00ff]/.test(unpacked) || /[^\u0000-\u00ff]/.test(unpacked)) return attribute;
+    try {
+      const repaired=bytesToText(Array.from(unpacked,char=>char.charCodeAt(0)));
+      return open+repaired+close;
+    } catch {
+      return attribute;
+    }
+  });
 }
 function register() {
   figma.showUI(__html__,{width:390,height:690,themeColors:true});
@@ -313,7 +332,7 @@ function register() {
   async function exportSvg() {
     if (figma.currentPage.selection.length!==1) throw Error('Для экспорта выберите одну композицию или один её предмет.');
     const frame=selectedFrame();
-    const raw=bytesToText(await frame.exportAsync({format:'SVG',svgIdAttribute:true,svgOutlineText:true}));
+    const raw=repairSvgIds(bytesToText(await frame.exportAsync({format:'SVG',svgIdAttribute:true,svgOutlineText:true})));
     if (/<(?:\w+:)?image\b/i.test(raw)) throw Error('В SVG обнаружен растр. Проверьте заливки и эффекты перед экспортом.');
     post('svg',{raw,name:frame.name.replace(/[<>:"/\\|?*]/g,'_')+'.svg'});
   }
@@ -337,4 +356,4 @@ function register() {
   };
 }
 if (typeof figma!=='undefined') register();
-if (typeof module!=='undefined') module.exports={indexLibrary,matchQuery,layout,validatePalette,recolor,schemes,bytesToText};
+if (typeof module!=='undefined') module.exports={indexLibrary,matchQuery,layout,validatePalette,recolor,schemes,bytesToText,repairSvgIds};

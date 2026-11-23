@@ -23,8 +23,9 @@ legend { padding:0 4px; font-weight:550 }
 .subject select { margin:3px 0 }
 #previewStatus { margin:2px 0 4px }
 small { display:block; color:var(--figma-color-text-secondary,#555) }
-details { margin-top:9px }
-summary { cursor:pointer }
+details { margin-top:9px; padding:8px 10px; border:1px solid var(--figma-color-border,#bbb); border-radius:6px }
+summary { cursor:pointer; font-weight:650 }
+details .help { margin:6px 0 9px }
 #issues { white-space:pre-wrap; overflow:auto; max-height:100px }
 #status { margin:8px 0 0; min-height:18px; overflow-wrap:anywhere }
 #status.error { color:var(--figma-color-text-danger,#aa2424) }
@@ -53,6 +54,7 @@ summary { cursor:pointer }
       <option value="">Исходные цвета</option><option value="0">Сиреневая</option><option value="1">Персиковая</option><option value="2">Бирюзовая</option>
     </select>
   </label>
+  <label>Загрузить свою палитру (JSON) <input id="import" type="file" accept=".json,application/json"></label>
   <fieldset id="roles" hidden>
     <legend>Роли предметов</legend>
     <small id="previewStatus" role="status"></small>
@@ -60,22 +62,32 @@ summary { cursor:pointer }
   </fieldset>
   <button class="primary" id="build" disabled>Собрать композицию</button>
 </form>
-<div class="row">
-  <button id="paletteAction" disabled>Применить палитру</button>
-  <button id="role" disabled>Сменить роль предмета</button>
-</div>
-<button id="formatAction" disabled>Применить выбранный формат к композиции</button>
-<button id="export" disabled>Подготовить SVG</button>
-<a id="download" hidden>Скачать SVG</a>
 <p id="status" role="status" aria-live="polite"></p>
 <details>
-  <summary>Библиотека и импорт палитры</summary>
+  <summary>Изменение текущей композиции</summary>
+  <small class="help">Выделите фрейм, созданный плагином. Здесь можно поменять его формат или палитру, добавить предмет и скачать SVG. Чтобы сменить роль предмета, выделите его внутри фрейма.</small>
+  <div class="row">
+    <label>Новый формат
+      <select id="editFormat"><option value="wide">Горизонтальный</option><option value="square">Квадрат</option><option value="vertical">Вертикальный</option></select>
+    </label>
+    <label>Новая палитра <select id="editPalette"></select></label>
+  </div>
+  <div class="row">
+    <button id="formatAction" disabled>Применить формат</button>
+    <button id="paletteAction" disabled>Применить палитру</button>
+  </div>
   <div class="row">
     <label>Предмет <select id="subject"></select></label>
     <label>Роль <select id="addRole"><option value="main">Главный</option><option value="background">Фоновый</option></select></label>
   </div>
   <button id="add" disabled>Добавить в выбранную композицию</button>
-  <label>Палитра в JSON <input id="import" type="file" accept=".json,application/json"></label>
+  <button id="role" disabled>Сменить роль выделенного предмета</button>
+  <button id="export" disabled>Подготовить SVG</button>
+  <a id="download" hidden>Скачать SVG</a>
+</details>
+<details>
+  <summary>Пополнение каталога</summary>
+  <small class="help">Чтобы добавить недостающий вариант знакомого предмета, поместите исходную векторную группу на страницу «Библиотека компонентов», в нужный раздел L или S и под нужную роль. Затем обновите каталог, чтобы вариант появился в списках.</small>
   <button id="scan">Обновить каталог</button>
   <small id="catalog">Загружаю каталог…</small>
   <small id="schemeColors"></small>
@@ -83,6 +95,7 @@ summary { cursor:pointer }
 </details>
 <details>
   <summary>Демонстрация</summary>
+  <small class="help">Создаёт три самостоятельных примера для показа плагина: горизонтальный, квадратный и вертикальный. Все три используют выбранную детализацию.</small>
   <label>Детализация примеров <select id="demoSize"><option>L</option><option>S</option></select></label>
   <button id="examples" disabled>Собрать три примера</button>
 </details>
@@ -91,6 +104,7 @@ const $=id=>document.getElementById(id);
 let catalogCount=0, busy=false, custom=null, schemes=[], svgURL=null;
 let namesBySize={L:[],S:[]};
 let selectionItems=[];
+$('editPalette').replaceChildren(...Array.from($('palette').options,option=>option.cloneNode(true)));
 let previewId=0, previewTimer, previewItems=[];
 const chosenRoles=new Map();
 function status(text,error=false) {
@@ -99,7 +113,8 @@ function status(text,error=false) {
 }
 function updateButtons() {
   $('scan').disabled=busy;
-  for (const id of ['role','export','paletteAction','examples']) $(id).disabled=busy||!catalogCount;
+  $('examples').disabled=busy||!catalogCount;
+  for (const id of ['role','export','paletteAction']) $(id).disabled=busy||!selectionItems.length;
   $('formatAction').disabled=busy||!selectionItems.length;
   $('add').disabled=busy||!$('subject').value;
   $('build').disabled=busy||!catalogCount||!previewItems.length;
@@ -175,8 +190,8 @@ function send(type,data={}) {
   updateButtons();
   parent.postMessage({pluginMessage:{type,...data}},'*');
 }
-function getPalette() {
-  const value=$('palette').value;
+function getPalette(id='palette') {
+  const value=$(id).value;
   if (value==='custom') return custom;
   return value===''?null:schemes[Number(value)];
 }
@@ -212,11 +227,11 @@ $('mode').onchange=()=>{
   updateQueryPicker();
   requestPreview();
 };
-$('paletteAction').onclick=()=>{clearDownload();send('palette',{palette:getPalette()});};
+$('paletteAction').onclick=()=>{clearDownload();send('palette',{palette:getPalette('editPalette')});};
 $('role').onclick=()=>{clearDownload();send('role');};
 $('subject').onchange=updateAddRole;
 $('add').onclick=()=>{clearDownload();send('add',{name:$('subject').value,role:$('addRole').value});};
-$('formatAction').onclick=()=>{clearDownload();send('format',{format:$('format').value});};
+$('formatAction').onclick=()=>{clearDownload();send('format',{format:$('editFormat').value});};
 $('examples').onclick=()=>{clearDownload();send('examples',{size:$('demoSize').value});};
 $('scan').onclick=()=>send('scan');
 $('export').onclick=()=>{clearDownload();send('export');};
@@ -231,9 +246,12 @@ $('import').onchange=async event=>{
         !['background','objects'].every(k=>Array.isArray(data[k])&&data[k].length===4&&data[k].every(hex)))
       throw Error('Ожидается JSON с name, canvas и четырьмя HEX-цветами в background и objects.');
     custom=data;
-    const option=[...$('palette').options].find(o=>o.value==='custom')||$('palette').appendChild(new Option('', 'custom'));
-    option.textContent=custom.name;
-    $('palette').value='custom';
+    for (const id of ['palette','editPalette']) {
+      const select=$(id);
+      const option=[...select.options].find(o=>o.value==='custom')||select.appendChild(new Option('', 'custom'));
+      option.textContent=custom.name;
+      select.value='custom';
+    }
     status('Палитра загружена. Примените её к выбранной композиции или соберите новую.');
   } catch(error) { status(error.message,true); }
   finally { event.target.value=''; }
@@ -249,7 +267,7 @@ onmessage=event=>{
       (message.sourcePalettes?' · Палитры прочитаны из Figma':'');
     $('schemeColors').textContent=message.sourcePalettes?schemes.map(p=>p.name+' '+p.canvas).join(' · '):'';
     $('issues').textContent=message.issues.join('\n');
-    status(message.issues.length?'Каталог собран. Замечания доступны в разделе «Библиотека и импорт палитры».':'Каталог собран.');
+    status(message.issues.length?'Каталог собран. Замечания доступны в разделе «Пополнение каталога».':'Каталог собран.');
     updateQueryPicker();
     requestPreview();
   }

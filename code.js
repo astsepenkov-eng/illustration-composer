@@ -440,19 +440,20 @@ function register() {
     figma.viewport.scrollAndZoomIntoView([frame]);
     post('status',{text:'Формат изменён: '+width+' × '+height+'. Предметы переразложены.'});
   }
-  function buildExamples() {
+  function buildExamples(size) {
+    if (!['L','S'].includes(size)) throw Error('Выберите детализацию L или S.');
     const palettes=catalog.palettes||schemes;
     const requests = [
-      {query:'Книга, наушники, пазлы',mode:'names',size:'L',format:'wide',palette:palettes[0],offsetX:-850},
-      {query:'Идеи и заметки на связи',mode:'meaning',size:'S',format:'square',palette:palettes[1],offsetX:350},
-      {query:'Растение, папка, монета',mode:'names',size:'L',format:'vertical',palette:palettes[2],offsetX:1370}
+      {query:'Книга, наушники, пазлы',mode:'names',format:'wide',palette:palettes[0],offsetX:-850},
+      {query:'Идеи и заметки на связи',mode:'meaning',format:'square',palette:palettes[1],offsetX:350},
+      {query:'Растение, папка, монета',mode:'names',format:'vertical',palette:palettes[2],offsetX:1370}
     ];
     const frames=[];
     try {
-      for (const request of requests) frames.push(build({...request,roles:['main','background']},false));
+      for (const request of requests) frames.push(build({...request,size,roles:['main','background']},false));
       figma.currentPage.selection=frames;
       figma.viewport.scrollAndZoomIntoView(frames);
-      post('status',{text:'Собраны три примера. Для скачивания выберите один фрейм.'});
+      post('status',{text:'Собраны три примера в детализации '+size+'. Для скачивания выберите один фрейм.'});
     } catch (error) {
       for (const frame of frames) frame.remove();
       throw error;
@@ -514,7 +515,7 @@ function register() {
       if (message.type==='build') build(message);
       if (message.type==='add') addSubject(message);
       if (message.type==='format') applyFormat(message.format);
-      if (message.type==='examples') buildExamples();
+      if (message.type==='examples') buildExamples(message.size);
       if (message.type==='role'||message.type==='palette') update(message);
       if (message.type==='export') await exportSvg();
     } catch(error) { post('status',{text:error.message,error:true}); }

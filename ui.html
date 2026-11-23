@@ -75,12 +75,16 @@ summary { cursor:pointer }
     <label>Роль <select id="addRole"><option value="main">Главный</option><option value="background">Фоновый</option></select></label>
   </div>
   <button id="add" disabled>Добавить в выбранную композицию</button>
-  <button id="examples" disabled>Собрать три примера</button>
   <label>Палитра в JSON <input id="import" type="file" accept=".json,application/json"></label>
   <button id="scan">Обновить каталог</button>
   <small id="catalog">Загружаю каталог…</small>
   <small id="schemeColors"></small>
   <small id="issues"></small>
+</details>
+<details>
+  <summary>Демонстрация</summary>
+  <label>Детализация примеров <select id="demoSize"><option>L</option><option>S</option></select></label>
+  <button id="examples" disabled>Собрать три примера</button>
 </details>
 <script>
 const $=id=>document.getElementById(id);
@@ -213,7 +217,7 @@ $('role').onclick=()=>{clearDownload();send('role');};
 $('subject').onchange=updateAddRole;
 $('add').onclick=()=>{clearDownload();send('add',{name:$('subject').value,role:$('addRole').value});};
 $('formatAction').onclick=()=>{clearDownload();send('format',{format:$('format').value});};
-$('examples').onclick=()=>{clearDownload();send('examples');};
+$('examples').onclick=()=>{clearDownload();send('examples',{size:$('demoSize').value});};
 $('scan').onclick=()=>send('scan');
 $('export').onclick=()=>{clearDownload();send('export');};
 $('import').onchange=async event=>{

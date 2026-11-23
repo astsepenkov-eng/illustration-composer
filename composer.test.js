@@ -194,5 +194,18 @@ test('plugin messages scan, assemble, recolor, change role and export',async()=>
   assert.equal(frame.width,700);
   assert.equal(frame.height,1050);
   assert.equal(frame.children.length,3);
+  for (const sizeSection of library.children) {
+    for (const name of ['Наушники','Пазлы','Лампа','Ручка','Растение','Папка','Монета']) {
+      for (const y of [120,220]) {
+        const variant=node('GROUP',name,y);
+        variant.clone=()=>editable(name,'GROUP');
+        sizeSection.children.push(variant);
+      }
+    }
+  }
+  await figma.ui.onmessage({type:'scan'});
+  await figma.ui.onmessage({type:'examples',size:'S'});
+  assert.deepEqual(Array.from(workPage.selection,frame=>[frame.width,frame.height]),[[1200,630],[1000,1000],[700,1050]]);
+  assert.ok(workPage.selection.every(frame=>frame.name.includes(' · S · ')));
   assert.equal(log.filter(msg=>msg.error).length,0);
 });

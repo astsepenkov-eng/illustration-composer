@@ -16,6 +16,9 @@ button { cursor:pointer }
 button.primary { background:var(--figma-color-bg-brand,#087bdc); color:var(--figma-color-text-onbrand,#fff); border-color:transparent; font-weight:650 }
 button:disabled { opacity:.5; cursor:default }
 .row { display:grid; grid-template-columns:1fr 1fr; gap:8px }
+.palette-upload { margin:10px 0 18px }
+.palette-upload input { display:block; width:100%; margin-top:6px; font-weight:400 }
+.palette-upload input::file-selector-button { padding:5px 9px; margin-right:8px; border:1px solid var(--figma-color-border,#bbb); border-radius:5px; background:var(--figma-color-bg-secondary,#f4f4f4); color:inherit; cursor:pointer }
 fieldset { margin:0 0 8px; padding:4px 8px; border:1px solid var(--figma-color-border,#bbb); border-radius:6px }
 legend { padding:0 4px; font-weight:550 }
 #subjects { max-height:165px; overflow:auto }
@@ -54,7 +57,7 @@ details .help { margin:6px 0 9px }
       <option value="">Исходные цвета</option><option value="0">Сиреневая</option><option value="1">Персиковая</option><option value="2">Бирюзовая</option>
     </select>
   </label>
-  <label>Загрузить свою палитру (JSON) <input id="import" type="file" accept=".json,application/json"></label>
+  <label class="palette-upload">Загрузить свою палитру (JSON) <input id="import" type="file" accept=".json,application/json"></label>
   <fieldset id="roles" hidden>
     <legend>Роли предметов</legend>
     <small id="previewStatus" role="status"></small>

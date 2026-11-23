@@ -69,6 +69,7 @@ summary { cursor:pointer }
   <label>Палитра в JSON <input id="import" type="file" accept=".json,application/json"></label>
   <button id="scan">Обновить каталог</button>
   <small id="catalog">Загружаю каталог…</small>
+  <small id="schemeColors"></small>
   <small id="issues"></small>
 </details>
 <script>
@@ -187,7 +188,9 @@ onmessage=event=>{
     catalogCount=message.count;
     schemes=message.schemes;
     $('subject').replaceChildren(...message.names.map(name=>new Option(name,name)));
-    $('catalog').textContent=message.count+' вариантов · '+message.names.join(', ');
+    $('catalog').textContent=message.count+' вариантов · '+message.names.join(', ')+
+      (message.sourcePalettes?' · Палитры прочитаны из Figma':'');
+    $('schemeColors').textContent=message.sourcePalettes?schemes.map(p=>p.name+' '+p.canvas).join(' · '):'';
     $('issues').textContent=message.issues.join('\n');
     status(message.issues.length?'Каталог собран. Замечания доступны в разделе «Библиотека и импорт палитры».':'Каталог собран.');
     requestPreview();

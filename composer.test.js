@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { indexLibrary, matchQuery, layout, validatePalette, recolor, schemes, bytesToText, repairSvgIds } = require('./code.js');
+const { indexLibrary, matchQuery, layout, validatePalette, recolor, schemes, bytesToText, repairSvgIds, freePosition, readLibraryPalettes } = require('./code.js');
 
 function node(type,name,y,children=[],width=50,height=40) {
   return {
@@ -39,19 +39,47 @@ test('catalogue links both roles and sizes and preserves outer wrappers',()=>{
 test('direct names and an unseen title produce eligible objects',()=>{
   assert.deepEqual(matchQuery('Книга, телефон','names',['Книга','Телефон']),['Книга','Телефон']);
   assert.deepEqual(matchQuery('Идеи всегда на связи','meaning',['Лампа','Телефон','Книга']),['Телефон','Лампа']);
+  assert.deepEqual(matchQuery('Библиотека в кармане','meaning',['Книга','Телефон']),['Книга','Телефон']);
+  assert.deepEqual(matchQuery('смартфон','names',['Телефон']),['Телефон']);
   assert.throws(()=>matchQuery('океан','meaning',['Книга','Телефон']),/не найдены/);
 });
-test('layout shares a scale across distinct source dimensions',()=>{
+test('layout shares a scale and follows the frame orientation',()=>{
   for (const [w,h] of [[1000,1000],[1200,630],[700,1050]]) {
     const items=[{width:1446,height:977},{width:797,height:462}];
     const result=layout(items,w,h);
     assert.equal(result[0].factor,result[1].factor);
+    if (h>w) assert.ok(result[0].y+items[0].height*result[0].factor<result[1].y);
+    if (w>h) assert.ok(result[0].x+items[0].width*result[0].factor<result[1].x);
     result.forEach((p,i)=>{
       assert.ok(p.x>=0 && p.y>=0);
       assert.ok(p.x+items[i].width*p.factor<w);
       assert.ok(p.y+items[i].height*p.factor<h);
     });
   }
+});
+test('new frame clears existing objects and preserves a free position',()=>{
+  const occupied=[{x:50,y:100,width:500,height:600},{x:750,y:0,width:200,height:300}];
+  assert.deepEqual(freePosition({x:100,y:100},300,400,occupied),{x:1046,y:100});
+  assert.deepEqual(freePosition({x:100,y:1000},300,400,occupied),{x:100,y:1000});
+});
+test('reads exact swatches from separate background and object columns',()=>{
+  const children=[];
+  for (let col=0;col<6;col++) {
+    const title=label(col%2?'Цвета объектов':'Цвета фона',20);
+    title.absoluteBoundingBox.x=col*100;
+    children.push(title);
+    for (let row=0;row<4;row++) {
+      const swatch=node('RECTANGLE','swatch',45+row*25,[],100,25);
+      swatch.absoluteBoundingBox.x=col*100;
+      swatch.fills=[{type:'SOLID',color:{r:col/255,g:row/255,b:0}}];
+      children.push(swatch);
+    }
+  }
+  const result=readLibraryPalettes(node('SECTION','Размер L',0,children),200);
+  assert.equal(result.length,3);
+  assert.deepEqual(result[1].background,['#020000','#020100','#020200','#020300']);
+  assert.deepEqual(result[1].objects,['#030000','#030100','#030200','#030300']);
+  assert.equal(result[2].canvas,'#040000');
 });
 test('background recolor maps all visible fills and strokes to background shades',()=>{
   const palette=validatePalette(require('./palette-example.json'));

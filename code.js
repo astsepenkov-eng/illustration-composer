@@ -1,14 +1,14 @@
 const subjects = [
-  ['Книга', 'книг учеб учёб учебник чтени чита образован знани book'],
-  ['Телефон', 'телефон смартфон мобиль приложени звон связ экран phone'],
+  ['Книга', 'книг учеб учёб учебник чтени чита образован знани библиотек литератур обуч курс book'],
+  ['Телефон', 'телефон смартфон мобиль приложени звон связ экран сообщени чат онлайн карман phone'],
   ['Пазлы', 'пазл головоломк част собрат решени задач совмест команд puzzle'],
-  ['Монета', 'монет деньг финансов бюджет оплат копейк накоп цен coin'],
+  ['Монета', 'монет деньг финансов бюджет оплат копейк накоп цен эконом инвест coin'],
   ['Папка', 'папк документ архив файл организац порядок folder'],
   ['Ручка', 'ручк писал письм заметк текст автор почерк pen'],
   ['Кошелек', 'кошел кошёл покупк сохран сбереж оплат бюджет wallet'],
   ['Лампа', 'ламп свет озар иде креатив придумыва вдохнов открыти творчеств lamp'],
   ['Наушники', 'наушник звук музык слуша аудио подкаст тишин headphone'],
-  ['Растение', 'растени цветок цветы букет рост природ сад уход plant']
+  ['Растение', 'растени цветок цветы букет рост растё развива природ сад уход plant']
 ];
 const schemes = [
   {name:'Сиреневая',canvas:'#D7CDF5',background:['#D7CDF5','#B3A2F0','#9884E7','#7864D7'],objects:['#F9ECB0','#FFE3E1','#F9A3AA','#E27687']},
@@ -18,7 +18,7 @@ const schemes = [
 const formats = {square:[1000,1000],wide:[1200,630],vertical:[700,1050]};
 const slot = (name,size,role) => [name,size,role].join('|');
 const normalize = value => String(value).toLowerCase().replace(/ё/g,'е');
-const aliases = {'пазл':'Пазлы','цветы':'Растение','цветок':'Растение','букет':'Растение'};
+const aliases = {'пазл':'Пазлы','головоломка':'Пазлы','цветы':'Растение','цветок':'Растение','букет':'Растение','смартфон':'Телефон','мобильник':'Телефон','светильник':'Лампа','копейка':'Монета'};
 const subjectName = name => subjects.find(([label]) => normalize(label) === normalize(name))?.[0] || aliases[normalize(name)];
 const sourceGroupNames = {
   'Group 2136136344':'Растение', 'Group 2136136347':'Растение',
@@ -38,6 +38,47 @@ function walk(node, visit) {
   visit(node);
   if ('children' in node) for (const child of node.children) walk(child,visit);
 }
+function readLibraryPalettes(section, mainY) {
+  const columns=[];
+  const paints=[];
+  walk(section,node=>{
+    if (node.visible===false || node===section) return;
+    const b=box(node);
+    if (!(b.width>0 && b.height>0 && b.y<mainY)) return;
+    if (node.type==='TEXT') {
+      const label=normalize(node.characters.trim());
+      if (label==='цвета фона' || label==='цвета объектов')
+        columns.push({...b,role:label.endsWith('фона')?'background':'objects'});
+      return;
+    }
+    if (!Array.isArray(node.fills)) return;
+    const visible=node.fills.filter(p=>p.visible!==false);
+    if (visible.length===1 && visible[0].type==='SOLID' && (visible[0].opacity??1)===1)
+      paints.push({...b,color:toHex(visible[0].color).toUpperCase()});
+  });
+  columns.sort((a,b)=>a.x-b.x);
+  if (columns.length!==6) return null;
+  const results=[];
+  for (let i=0;i<columns.length;i+=2) {
+    const left=columns[i], right=columns[i+1];
+    if (left.role!=='background' || right.role!=='objects') return null;
+    const gap=right.x-left.x;
+    function swatches(label) {
+      const candidates=paints.filter(p=>p.y>=label.y && p.width/p.height>=1.5 &&
+        p.width>gap*.45 && p.width<gap*1.5 && Math.abs(p.x-label.x)<gap*.4);
+      for (const first of candidates.sort((a,b)=>a.y-b.y)) {
+        const aligned=candidates.filter(p=>Math.abs(p.width-first.width)<gap*.1 && Math.abs(p.x-first.x)<gap*.1);
+        const rows=aligned.filter((p,index)=>aligned.findIndex(other=>Math.abs(other.y-p.y)<1)===index);
+        if (rows.length===4) return rows.map(p=>p.color);
+      }
+      return null;
+    }
+    const background=swatches(left), objects=swatches(right);
+    if (!background || !objects) return null;
+    results.push({name:schemes[i/2].name,canvas:background[0],background,objects});
+  }
+  return results;
+}
 function validatePalette(value) {
   const validHex = hex => typeof hex === 'string' && /^#[\da-f]{6}$/i.test(hex);
   if (!value || typeof value.name !== 'string' || !value.name.trim() || !validHex(value.canvas) ||
@@ -49,6 +90,7 @@ function validatePalette(value) {
 function indexLibrary(page) {
   const variants = new Map();
   const issues = [];
+  let palettes;
   for (const size of ['L','S']) {
     const section = page.findOne(node=>node.type==='SECTION' && normalize(node.name).trim()===normalize('Размер '+size));
     if (!section) { issues.push('Не найдена секция «Размер '+size+'».'); continue; }
@@ -56,6 +98,7 @@ function indexLibrary(page) {
     const backLabel = section.findOne(n=>n.type==='TEXT' && /^фоновые объекты$/i.test(n.characters.trim()));
     if (!mainLabel || !backLabel) { issues.push(size+': отсутствуют подписи ролей.'); continue; }
     const mainY = box(mainLabel).y;
+    palettes ||= readLibraryPalettes(section,mainY);
     const backgroundY = box(backLabel).y;
     const pending = [];
     for (const node of section.children) {
@@ -91,7 +134,7 @@ function indexLibrary(page) {
     for (const size of ['L','S']) for (const role of ['main','background'])
       if (!variants.has(slot(name,size,role))) issues.push('Нет пары: '+slot(name,size,role));
   }
-  return {variants,issues};
+  return {variants,issues,palettes};
 }
 function matchQuery(query, mode, available) {
   const value = normalize(query.trim());
@@ -112,9 +155,8 @@ function matchQuery(query, mode, available) {
   if (!ranking.length) throw Error('Подходящие предметы не найдены. Добавьте смысловую подсказку или укажите названия.');
   return ranking.slice(0,3).map(item=>item.name);
 }
-function recolor(node, role, palette) {
+function recolor(node, role, palette, source=schemes[0]) {
   if (!palette) return;
-  const source = schemes[0];
   const sourceColors = [...source.background,...source.objects].map(rgb);
   function remap(color) {
     if (role==='background') {
@@ -146,19 +188,50 @@ function recolor(node, role, palette) {
     }
   });
 }
-function layout(items,width,height) {
-  let columns = Math.min(items.length, width>=height ? 3 : 2);
-  if (items.length===4 && width<=height) columns=2;
-  const rows = Math.ceil(items.length/columns);
-  const cellW=width*.84/columns, cellH=height*.82/rows;
-  const factor=Math.min(...items.map(n=>Math.min(cellW*.9/n.width,cellH*.9/n.height)));
-  return items.map((item,i)=>{
-    const row=Math.floor(i/columns);
-    const amount=Math.min(columns,items.length-row*columns);
-    return {factor,
-      x:width/2+(i%columns-(amount-1)/2)*cellW-item.width*factor/2,
-      y:height/2+(row-(rows-1)/2)*cellH-item.height*factor/2};
+function layout(items,width,height,roles=[]) {
+  const transpose=height>width;
+  const horizontal=transpose?height:width;
+  const vertical=transpose?width:height;
+  const rowSize=horizontal/vertical>1.3?3:2;
+  const order=items.map((item,i)=>({i,w:transpose?item.height:item.width,h:transpose?item.width:item.height}));
+  const rows=[];
+  if (width===height && items.length>=3) {
+    const main=order.filter(item=>roles[item.i]!=='background');
+    const anchor=(main.length?main:order).reduce((best,item)=>item.w*item.h>best.w*best.h?item:best);
+    rows.push(order.splice(order.indexOf(anchor),1));
+  }
+  for (let i=0;i<order.length;i+=rowSize) rows.push(order.slice(i,i+rowSize));
+  const gap=.075*horizontal;
+  const rowGap=.075*vertical;
+  const metrics=rows.map(row=>({w:row.reduce((sum,item)=>sum+item.w,0),h:Math.max(...row.map(item=>item.h))}));
+  const factor=Math.min(
+    ...metrics.map((row,i)=>(horizontal*.84-gap*(rows[i].length-1))/row.w),
+    (vertical*.78-rowGap*(rows.length-1))/metrics.reduce((sum,row)=>sum+row.h,0)
+  );
+  const totalHeight=metrics.reduce((sum,row)=>sum+row.h*factor,0)+rowGap*(rows.length-1);
+  const result=[];
+  let y=(vertical-totalHeight)/2;
+  rows.forEach((row,index)=>{
+    const {w,h}=metrics[index];
+    let x=(horizontal-w*factor-gap*(row.length-1))/2;
+    row.forEach(item=>{
+      const centeredY=y+(h-item.h)*factor/2;
+      result[item.i]={factor,x:transpose?centeredY:x,y:transpose?x:centeredY};
+      x+=item.w*factor+gap;
+    });
+    y+=h*factor+rowGap;
   });
+  return result;
+}
+function freePosition(preferred,width,height,occupied) {
+  const gap=96;
+  let {x,y}=preferred;
+  // Process left-to-right, so any obstruction we move past stays behind us.
+  for (const rect of [...occupied].sort((a,b)=>a.x-b.x)) {
+    if (rect.y<y+height+gap && rect.y+rect.height+gap>y &&
+        rect.x<x+width+gap && rect.x+rect.width+gap>x) x=rect.x+rect.width+gap;
+  }
+  return {x,y};
 }
 function bytesToText(bytes) {
   let encoded='';
@@ -188,7 +261,8 @@ function register() {
     if (!page) throw Error('В этом файле нужна страница «Библиотека компонентов» с секциями «Размер L» и «Размер S».');
     await page.loadAsync();
     catalog=indexLibrary(page);
-    post('catalog',{count:catalog.variants.size,issues:catalog.issues,schemes,names:subjects.filter(([name])=>['L','S'].some(size=>catalog.variants.has(slot(name,size,'main')))).map(([name])=>name)});
+    if (!catalog.palettes) catalog.issues.push('Образцы палитр не распознаны. Показаны резервные схемы.');
+    post('catalog',{count:catalog.variants.size,issues:catalog.issues,schemes:catalog.palettes||schemes,sourcePalettes:Boolean(catalog.palettes),names:subjects.filter(([name])=>['L','S'].some(size=>catalog.variants.has(slot(name,size,'main')))).map(([name])=>name)});
   }
   function source(name,size,role) {
     const node=catalog?.variants.get(slot(name,size,role));
@@ -200,7 +274,7 @@ function register() {
     try {
       parent.appendChild(node);
       node.locked=false;
-      recolor(node,role,palette);
+      recolor(node,role,palette,catalog.palettes?.[0]);
       node.name=name+' · '+size+' · '+(role==='background'?'фон':'главный');
       node.setPluginData('subject',JSON.stringify({name,size,role}));
       return node;
@@ -232,16 +306,20 @@ function register() {
     if (!names.length) throw Error('Добавьте хотя бы один предмет.');
     const [width,height]=formats[format];
     const roles=subjects.map((item,i)=>item.background && message.roles?.[i]==='background'?'background':'main');
+    const position=freePosition({
+      x:figma.viewport.center.x-width/2+(message.offsetX||0),
+      y:figma.viewport.center.y-height/2+(message.offsetY||0)
+    },width,height,(figma.currentPage.children||[]).filter(n=>n.visible!==false).map(box));
     const frame=figma.createFrame();
     try {
       frame.name=query.trim().slice(0,70)+' · '+size+' · '+width+' × '+height;
       frame.resize(width,height);
-      frame.x=figma.viewport.center.x-width/2+(message.offsetX||0);
-      frame.y=figma.viewport.center.y-height/2+(message.offsetY||0);
-      frame.fills=solid(palette?.canvas||schemes[0].canvas);
+      frame.x=position.x;
+      frame.y=position.y;
+      frame.fills=solid(palette?.canvas||(catalog.palettes||schemes)[0].canvas);
       frame.clipsContent=true;
       const items=names.map((name,i)=>copy(name,size,roles[i],palette,frame));
-      const positions=layout(items,width,height);
+      const positions=layout(items,width,height,roles);
       frame.setPluginData('composition',JSON.stringify({size,palette,scale:positions[0].factor}));
       items.forEach((node,i)=>{
         const pos=positions[i];
@@ -277,10 +355,11 @@ function register() {
     }
   }
   function buildExamples() {
+    const palettes=catalog.palettes||schemes;
     const requests = [
-      {query:'Книга, телефон',mode:'names',size:'L',format:'wide',palette:schemes[0],offsetX:-850},
-      {query:'Книга и мобильная связь',mode:'meaning',size:'S',format:'square',palette:schemes[1],offsetX:350},
-      {query:'Телефон, книга',mode:'names',size:'L',format:'vertical',palette:schemes[2],offsetX:1370}
+      {query:'Книга, наушники, пазлы',mode:'names',size:'L',format:'wide',palette:palettes[0],offsetX:-850},
+      {query:'Идеи и заметки на связи',mode:'meaning',size:'S',format:'square',palette:palettes[1],offsetX:350},
+      {query:'Растение, папка, монета',mode:'names',size:'L',format:'vertical',palette:palettes[2],offsetX:1370}
     ];
     const frames=[];
     try {
@@ -324,7 +403,7 @@ function register() {
       old.remove();
       if (roleChange) frame.insertChild(nextRole==='background'?0:frame.children.length-1,node);
     }
-    frame.fills=solid(palette?.canvas||schemes[0].canvas);
+    frame.fills=solid(palette?.canvas||(catalog.palettes||schemes)[0].canvas);
     frame.setPluginData('composition',JSON.stringify({...settings,palette}));
     figma.currentPage.selection=roleChange?[replacements[0].node]:[frame];
     post('status',{text:roleChange?'Роль изменена.':'Палитра применена.'});
@@ -356,4 +435,4 @@ function register() {
   };
 }
 if (typeof figma!=='undefined') register();
-if (typeof module!=='undefined') module.exports={indexLibrary,matchQuery,layout,validatePalette,recolor,schemes,bytesToText,repairSvgIds};
+if (typeof module!=='undefined') module.exports={indexLibrary,matchQuery,layout,validatePalette,recolor,schemes,bytesToText,repairSvgIds,freePosition,readLibraryPalettes};

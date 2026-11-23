@@ -291,6 +291,14 @@ function register() {
   let busy=false;
   const post = (type,data) => figma.ui.postMessage({type,...data});
   const availableNames = size => subjects.map(([name])=>name).filter(name=>catalog?.variants.has(slot(name,size,'main')));
+  function postSelection() {
+    let size;
+    try { size=JSON.parse(selectedFrame().getPluginData('composition')).size; }
+    catch { /* The current selection is outside a composition. */ }
+    post('selection',{items:size?availableNames(size).map(name=>({
+      name,background:catalog.variants.has(slot(name,size,'background'))
+    })):[]});
+  }
   async function scan() {
     const page=figma.root.children.find(n=>normalize(n.name.trim())==='библиотека компонентов');
     if (!page) throw Error('В этом файле нужна страница «Библиотека компонентов» с секциями «Размер L» и «Размер S».');
@@ -300,6 +308,7 @@ function register() {
     const namesBySize={L:availableNames('L'),S:availableNames('S')};
     post('catalog',{count:catalog.variants.size,issues:catalog.issues,schemes:catalog.palettes||schemes,
       sourcePalettes:Boolean(catalog.palettes),namesBySize,names:[...new Set([...namesBySize.L,...namesBySize.S])]});
+    postSelection();
   }
   function source(name,size,role) {
     const node=catalog?.variants.get(slot(name,size,role));
@@ -378,16 +387,18 @@ function register() {
     const {size,palette,scale}=JSON.parse(frame.getPluginData('composition'));
     const name=subjectName(message.name);
     if (!name) throw Error('Выберите предмет из каталога.');
+    const role=message.role==='background'?'background':'main';
     const occupied=frame.children.filter(child=>child.visible).map(itemBounds);
-    const original=source(name,size,'main');
+    const original=source(name,size,role);
     const factor=scale||1;
     const position=planItemPlacement(frame.width,frame.height,original.width*factor,original.height*factor,occupied);
     const expanded=position.frameWidth!==frame.width || position.frameHeight!==frame.height;
-    const node=copy(name,size,'main',palette,frame);
+    const node=copy(name,size,role,palette,frame);
     try {
       node.rescale(factor);
       node.x=position.x;
       node.y=position.y;
+      if (role==='background') frame.insertChild(0,node);
       if (expanded) {
         frame.resizeWithoutConstraints(position.frameWidth,position.frameHeight);
         frame.name=frame.name.replace(/ · \d+ × \d+$/, ' · '+position.frameWidth+' × '+position.frameHeight);
@@ -398,6 +409,36 @@ function register() {
       node.remove();
       throw error;
     }
+  }
+  function applyFormat(format) {
+    const frame=selectedFrame();
+    const dimensions=formats[format];
+    if (!dimensions) throw Error('Неизвестный формат.');
+    const [width,height]=dimensions;
+    const children=[...frame.children];
+    if (children.some(node=>typeof node.rescale!=='function' || !node.relativeTransform))
+      throw Error('Во фрейме есть слой, который нельзя переразложить.');
+    const roles=children.map(node=>JSON.parse(node.getPluginData('subject')||'{}').role);
+    const positions=children.length?layout(children.map(itemBounds),width,height,roles):[];
+    if (positions.some(position=>position.factor<.01)) throw Error('Для этого формата предметы пришлось бы уменьшить слишком сильно.');
+    const position=freePosition({x:frame.x,y:frame.y},width,height,
+      figma.currentPage.children.filter(node=>node!==frame&&node.visible!==false).map(box));
+    frame.resizeWithoutConstraints(width,height);
+    frame.x=position.x;
+    frame.y=position.y;
+    for (const [index,node] of children.entries()) {
+      const target=positions[index];
+      node.rescale(target.factor);
+      const bounds=itemBounds(node);
+      node.x+=target.x-bounds.x;
+      node.y+=target.y-bounds.y;
+    }
+    const settings=JSON.parse(frame.getPluginData('composition'));
+    frame.setPluginData('composition',JSON.stringify({...settings,scale:(settings.scale||1)*(positions[0]?.factor||1)}));
+    frame.name=frame.name.replace(/ · \d+ × \d+$/, ' · '+width+' × '+height);
+    figma.currentPage.selection=[frame];
+    figma.viewport.scrollAndZoomIntoView([frame]);
+    post('status',{text:'Формат изменён: '+width+' × '+height+'. Предметы переразложены.'});
   }
   function buildExamples() {
     const palettes=catalog.palettes||schemes;
@@ -472,12 +513,14 @@ function register() {
       if (message.type==='scan') await scan();
       if (message.type==='build') build(message);
       if (message.type==='add') addSubject(message);
+      if (message.type==='format') applyFormat(message.format);
       if (message.type==='examples') buildExamples();
       if (message.type==='role'||message.type==='palette') update(message);
       if (message.type==='export') await exportSvg();
     } catch(error) { post('status',{text:error.message,error:true}); }
-    finally { busy=false; post('ready',{}); }
+    finally { busy=false; postSelection(); post('ready',{}); }
   };
+  figma.on('selectionchange',postSelection);
 }
 if (typeof figma!=='undefined') register();
 if (typeof module!=='undefined') module.exports={indexLibrary,matchQuery,layout,validatePalette,recolor,schemes,bytesToText,repairSvgIds,freePosition,readLibraryPalettes,findItemPosition,itemBounds,planItemPlacement};

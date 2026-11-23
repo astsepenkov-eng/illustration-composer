@@ -127,7 +127,7 @@ test('plugin messages scan, assemble, recolor, change role and export',async()=>
   const fs=require('node:fs');
   const library=node('PAGE','Библиотека компонентов',0,[section('L'),section('S')]);
   library.loadAsync=async()=>{};
-  const workPage={selection:[]};
+  const workPage={selection:[],children:[]};
   const log=[];
   function editable(name,type,width=50,height=40) {
     const data=new Map();
@@ -153,7 +153,7 @@ test('plugin messages scan, assemble, recolor, change role and export',async()=>
   for (const variant of indexLibrary(library).variants.values())
     variant.clone=()=>editable(variant.name,'GROUP');
   const figma={
-    root:{children:[library]},currentPage:workPage,showUI(){},
+    root:{children:[library]},currentPage:workPage,showUI(){},on(){},
     viewport:{center:{x:0,y:0},scrollAndZoomIntoView(){}},
     ui:{postMessage(event){log.push(event);}},
     createFrame(){return editable('Frame','FRAME');}
@@ -185,9 +185,14 @@ test('plugin messages scan, assemble, recolor, change role and export',async()=>
   existing.width=frame.width;
   existing.height=frame.height;
   const previousHeight=frame.height;
-  await figma.ui.onmessage({type:'add',name:'Телефон'});
+  await figma.ui.onmessage({type:'add',name:'Телефон',role:'background'});
   assert.ok(frame.height>previousHeight);
   assert.equal(existing.height,previousHeight);
   assert.ok(workPage.selection[0].y>previousHeight);
+  assert.match(workPage.selection[0].name,/Телефон.*фон/);
+  await figma.ui.onmessage({type:'format',format:'vertical'});
+  assert.equal(frame.width,700);
+  assert.equal(frame.height,1050);
+  assert.equal(frame.children.length,3);
   assert.equal(log.filter(msg=>msg.error).length,0);
 });

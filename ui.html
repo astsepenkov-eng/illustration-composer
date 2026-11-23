@@ -64,12 +64,16 @@ summary { cursor:pointer }
   <button id="paletteAction" disabled>Применить палитру</button>
   <button id="role" disabled>Сменить роль предмета</button>
 </div>
+<button id="formatAction" disabled>Применить выбранный формат к композиции</button>
 <button id="export" disabled>Подготовить SVG</button>
 <a id="download" hidden>Скачать SVG</a>
 <p id="status" role="status" aria-live="polite"></p>
 <details>
   <summary>Библиотека и импорт палитры</summary>
-  <label>Предмет для готовой композиции <select id="subject"></select></label>
+  <div class="row">
+    <label>Предмет <select id="subject"></select></label>
+    <label>Роль <select id="addRole"><option value="main">Главный</option><option value="background">Фоновый</option></select></label>
+  </div>
   <button id="add" disabled>Добавить в выбранную композицию</button>
   <button id="examples" disabled>Собрать три примера</button>
   <label>Палитра в JSON <input id="import" type="file" accept=".json,application/json"></label>
@@ -82,6 +86,7 @@ summary { cursor:pointer }
 const $=id=>document.getElementById(id);
 let catalogCount=0, busy=false, custom=null, schemes=[], svgURL=null;
 let namesBySize={L:[],S:[]};
+let selectionItems=[];
 let previewId=0, previewTimer, previewItems=[];
 const chosenRoles=new Map();
 function status(text,error=false) {
@@ -90,9 +95,21 @@ function status(text,error=false) {
 }
 function updateButtons() {
   $('scan').disabled=busy;
-  for (const id of ['role','export','paletteAction','add','examples']) $(id).disabled=busy||!catalogCount;
+  for (const id of ['role','export','paletteAction','examples']) $(id).disabled=busy||!catalogCount;
+  $('formatAction').disabled=busy||!selectionItems.length;
+  $('add').disabled=busy||!$('subject').value;
   $('build').disabled=busy||!catalogCount||!previewItems.length;
   $('appendQuery').disabled=busy||!$('querySubject').value;
+}
+function updateAddRole() {
+  const subject=selectionItems.find(item=>item.name===$('subject').value);
+  const select=$('addRole');
+  const background=select.options[1];
+  background.disabled=!subject?.background;
+  background.textContent=subject?.background?'Фоновый':'Фон недоступен';
+  select.disabled=!subject;
+  if (background.disabled) select.value='main';
+  updateButtons();
 }
 function updateQueryPicker() {
   const mode=$('mode').value;
@@ -193,7 +210,9 @@ $('mode').onchange=()=>{
 };
 $('paletteAction').onclick=()=>{clearDownload();send('palette',{palette:getPalette()});};
 $('role').onclick=()=>{clearDownload();send('role');};
-$('add').onclick=()=>{clearDownload();send('add',{name:$('subject').value});};
+$('subject').onchange=updateAddRole;
+$('add').onclick=()=>{clearDownload();send('add',{name:$('subject').value,role:$('addRole').value});};
+$('formatAction').onclick=()=>{clearDownload();send('format',{format:$('format').value});};
 $('examples').onclick=()=>{clearDownload();send('examples');};
 $('scan').onclick=()=>send('scan');
 $('export').onclick=()=>{clearDownload();send('export');};
@@ -222,7 +241,6 @@ onmessage=event=>{
     catalogCount=message.count;
     schemes=message.schemes;
     namesBySize=message.namesBySize;
-    $('subject').replaceChildren(...message.names.map(name=>new Option(name,name)));
     $('catalog').textContent=message.count+' вариантов · '+message.names.join(', ')+
       (message.sourcePalettes?' · Палитры прочитаны из Figma':'');
     $('schemeColors').textContent=message.sourcePalettes?schemes.map(p=>p.name+' '+p.canvas).join(' · '):'';
@@ -230,6 +248,15 @@ onmessage=event=>{
     status(message.issues.length?'Каталог собран. Замечания доступны в разделе «Библиотека и импорт палитры».':'Каталог собран.');
     updateQueryPicker();
     requestPreview();
+  }
+  if (message.type==='selection') {
+    selectionItems=message.items;
+    const subject=$('subject');
+    const previous=subject.value;
+    subject.replaceChildren(new Option(selectionItems.length?'Выбрать предмет':'Выделите композицию',''),
+      ...selectionItems.map(item=>new Option(item.name,item.name)));
+    if (selectionItems.some(item=>item.name===previous)) subject.value=previous;
+    updateAddRole();
   }
   if (message.type==='preview') renderPreview(message);
   if (message.type==='status') status(message.text,message.error);

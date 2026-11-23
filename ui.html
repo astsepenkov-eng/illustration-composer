@@ -6,7 +6,9 @@
 :root { color-scheme:light dark; font:13px/1.4 system-ui,sans-serif }
 * { box-sizing:border-box }
 [hidden] { display:none !important }
-body { margin:0; padding:16px; background:var(--figma-color-bg,#fff); color:var(--figma-color-text,#222) }
+body { margin:0; height:100vh; display:grid; grid-template-rows:minmax(0,1fr) 28px; overflow:hidden; background:var(--figma-color-bg,#fff); color:var(--figma-color-text,#222) }
+main { min-width:0; overflow-y:auto; scrollbar-gutter:stable; padding:16px }
+.window-footer { display:flex; justify-content:flex-end; align-items:center; padding-right:4px }
 h1 { font-size:18px; margin:0 0 12px }
 label { display:block; font-weight:550 }
 select,textarea,button,input { font:inherit }
@@ -34,11 +36,23 @@ details { margin-top:9px; padding:8px 10px; border:1px solid var(--figma-color-b
 summary { cursor:pointer; font-weight:650 }
 details .help { margin:6px 0 9px }
 #issues { white-space:pre-wrap; overflow:auto; max-height:100px }
+#importedItemsReport, #customPaletteReport { white-space:pre-line; overflow-wrap:anywhere; margin-bottom:6px }
+.catalog-report-label { margin:0 0 3px; font-size:12px; font-weight:500; color:var(--figma-color-text,#222) }
+.catalog-report-label:not(:first-of-type) { margin-top:9px }
+.catalog-rows { display:grid; gap:4px }
+.palette-row { display:flex; gap:6px; align-items:center; flex-wrap:wrap }
+.palette-swatch { width:12px; height:12px; flex:none; border:1px solid var(--figma-color-border,#bbb); border-radius:3px }
+.palette-code { font-size:inherit; color:var(--figma-color-text-secondary,#555) }
 #status { margin:8px 0 0; min-height:18px; overflow-wrap:anywhere }
 #status.error { color:var(--figma-color-text-danger,#aa2424) }
 #download { display:inline-block; color:var(--figma-color-text-brand,#087bdc); margin-top:5px }
 #download[hidden] { display:none }
+#actionAlert { position:fixed; z-index:10; left:16px; right:16px; bottom:34px; padding:10px 12px; border-radius:6px; border:1px solid var(--figma-color-border-success,#408365); background:var(--figma-color-bg-success-secondary,#e6f5ec); color:var(--figma-color-text,#222); box-shadow:0 3px 12px #0003; font-weight:600; overflow-wrap:anywhere; pointer-events:none }
+#actionAlert.error { border-color:var(--figma-color-border-danger,#c95653); background:var(--figma-color-bg-danger-secondary,#fce8e7) }
+#resizeHandle { width:27px; height:27px; margin:0; padding:0; border:0; background:transparent; display:grid; place-items:center; cursor:nwse-resize; touch-action:none; user-select:none; color:var(--figma-color-text-secondary,#555) }
+#resizeHandle span { width:10px; height:10px; background:repeating-linear-gradient(135deg,transparent 0 3px,currentColor 3px 4px); clip-path:polygon(100% 0,100% 100%,0 100%); pointer-events:none }
 </style>
+<main>
 <h1>Конструктор иллюстраций</h1>
 <form id="composer">
   <label>Подбор предметов
@@ -61,7 +75,6 @@ details .help { margin:6px 0 9px }
       <option value="">Исходные цвета</option><option value="0">Сиреневая</option><option value="1">Персиковая</option><option value="2">Бирюзовая</option>
     </select>
   </label>
-  <label class="palette-upload">Загрузить свою палитру (JSON) <input id="import" type="file" accept=".json,application/json"></label>
   <fieldset id="roles" hidden>
     <legend>Роли предметов</legend>
     <small id="previewStatus" role="status"></small>
@@ -102,7 +115,9 @@ details .help { margin:6px 0 9px }
   <button id="role" disabled>Сменить роль выделенного предмета</button>
 </details>
 <details>
-  <summary>Пополнение каталога</summary>
+  <summary>Материалы</summary>
+  <fieldset class="edit-subsection">
+  <legend>Пополнение каталога</legend>
   <small class="help">Загрузите SVG одного предмета из исходной библиотеки. Чтобы связать версии одного предмета, используйте одинаковое название для всех размеров и ролей.</small>
   <label>Название предмета <input id="catalogName" type="text" maxlength="60"></label>
   <div class="row">
@@ -112,10 +127,17 @@ details .help { margin:6px 0 9px }
   <label class="palette-upload">Файл SVG <input id="catalogSvg" type="file" accept=".svg,image/svg+xml"></label>
   <button id="catalogImport" disabled>Добавить в каталог</button>
   <small id="catalogFeedback" role="status"></small>
-  <button id="scan">Перечитать библиотеку Figma</button>
-  <small id="catalog">Загружаю каталог…</small>
-  <small id="schemeColors"></small>
-  <small id="issues"></small>
+  </fieldset>
+  <fieldset class="edit-subsection">
+    <legend>Загрузить свою палитру</legend>
+    <small class="help">Загрузите JSON с цветом холста и оттенками для главных и фоновых предметов.</small>
+    <label class="palette-upload">Файл палитры (JSON) <input id="import" type="file" accept=".json,application/json"></label>
+  </fieldset>
+  <fieldset class="edit-subsection">
+    <legend>Обновление библиотеки</legend>
+    <button id="scan">Перечитать библиотеку Figma</button>
+    <small class="help">Нажмите, если вручную изменили слои библиотеки в Figma. После загрузки SVG через плагин каталог обновляется автоматически.</small>
+  </fieldset>
 </details>
 <details>
   <summary>Демонстрация</summary>
@@ -123,18 +145,121 @@ details .help { margin:6px 0 9px }
   <label>Детализация примеров <select id="demoSize"><option>L</option><option>S</option></select></label>
   <button id="examples" disabled>Собрать три примера</button>
 </details>
+<details>
+  <summary>Состояние каталога</summary>
+  <fieldset class="edit-subsection">
+    <legend>Исходная библиотека</legend>
+    <p class="catalog-report-label">Предметы</p>
+    <small id="catalog">Загружаю каталог…</small>
+    <small id="originalNames"></small>
+    <p class="catalog-report-label">Палитры</p>
+    <small class="catalog-rows" id="schemeColors"></small>
+  </fieldset>
+  <fieldset class="edit-subsection">
+    <legend>Загружено через плагин</legend>
+    <p class="catalog-report-label">Предметы</p>
+    <small id="importedItemsReport">Загружаю список предметов…</small>
+    <p class="catalog-report-label">Палитры</p>
+    <small class="catalog-rows" id="customPaletteReport">Свои палитры пока не загружены.</small>
+  </fieldset>
+  <small id="issues"></small>
+</details>
+</main>
+<div id="actionAlert" aria-hidden="true" hidden></div>
+<footer class="window-footer">
+  <button type="button" id="resizeHandle" aria-label="Изменить размер окна стрелками" title="Потяните уголок, чтобы изменить размер окна"><span aria-hidden="true"></span></button>
+</footer>
 <script>
 const $=id=>document.getElementById(id);
-let catalogCount=0, busy=false, custom=null, schemes=[], svgURL=null;
+let catalogCount=0, busy=false, customPalettes=[], schemes=[], svgURL=null;
 let namesBySize={L:[],S:[]};
 let selectionItems=[];
 let canExport=false;
 $('editPalette').replaceChildren(...Array.from($('palette').options,option=>option.cloneNode(true)));
 let previewId=0, previewTimer, previewItems=[];
+let activeAction='', alertTimer;
+const resizeHandle=$('resizeHandle');
+let resizeDrag=null, resizeTick=0;
+function resizeWindow(width,height,remember=false) {
+  const maxWidth=Math.max(320,Math.min(1100,(screen.availWidth||1180)-80));
+  const maxHeight=Math.max(300,Math.min(1000,(screen.availHeight||1096)-96));
+  parent.postMessage({pluginMessage:{type:'resizeWindow',
+    width:Math.max(320,Math.min(maxWidth,width)),height:Math.max(300,Math.min(maxHeight,height)),remember}},'*');
+}
+resizeHandle.onpointerdown=event=>{
+  if (event.button!==0 || resizeDrag) return;
+  resizeDrag={id:event.pointerId,x:event.screenX,y:event.screenY,
+    width:innerWidth,height:innerHeight,nextWidth:innerWidth,nextHeight:innerHeight};
+  resizeHandle.setPointerCapture(event.pointerId);
+  event.preventDefault();
+};
+resizeHandle.onpointermove=event=>{
+  if (event.pointerId!==resizeDrag?.id) return;
+  resizeDrag.nextWidth=resizeDrag.width+event.screenX-resizeDrag.x;
+  resizeDrag.nextHeight=resizeDrag.height+event.screenY-resizeDrag.y;
+  if (!resizeTick) resizeTick=requestAnimationFrame(()=>{
+    resizeTick=0;
+    if (resizeDrag) resizeWindow(resizeDrag.nextWidth,resizeDrag.nextHeight);
+  });
+};
+function finishResize(event) {
+  if (event.pointerId!==resizeDrag?.id) return;
+  cancelAnimationFrame(resizeTick);
+  resizeTick=0;
+  resizeWindow(resizeDrag.nextWidth,resizeDrag.nextHeight,true);
+  resizeDrag=null;
+}
+resizeHandle.onpointerup=finishResize;
+resizeHandle.onpointercancel=finishResize;
+resizeHandle.onlostpointercapture=finishResize;
+resizeHandle.onkeydown=event=>{
+  const offsets={ArrowLeft:[-20,0],ArrowRight:[20,0],ArrowUp:[0,-20],ArrowDown:[0,20]};
+  if (!Object.hasOwn(offsets,event.key)) return;
+  event.preventDefault();
+  const [w,h]=offsets[event.key];
+  resizeWindow(innerWidth+w,innerHeight+h,true);
+};
 const chosenRoles=new Map();
+function renderPaletteRows(id,palettes,emptyMessage) {
+  const target=$(id);
+  if (!palettes.length) {target.textContent=emptyMessage;return;}
+  target.replaceChildren(...palettes.map(palette=>{
+    const row=document.createElement('span');
+    row.className='palette-row';
+    const swatch=document.createElement('span');
+    swatch.className='palette-swatch';
+    swatch.style.backgroundColor=palette.canvas;
+    swatch.setAttribute('aria-hidden','true');
+    const code=document.createElement('code');
+    code.className='palette-code';
+    code.textContent=palette.canvas;
+    row.append(swatch,document.createTextNode(palette.name),code);
+    return row;
+  }));
+}
+function renderImportedItems(items) {
+  const groups=new Map();
+  for (const {name,size,role} of items) {
+    if (!groups.has(name)) groups.set(name,new Map());
+    const sizes=groups.get(name);
+    if (!sizes.has(size)) sizes.set(size,new Set());
+    sizes.get(size).add(role);
+  }
+  $('importedItemsReport').textContent=groups.size?[...groups].map(([name,sizes])=>name+' · '+
+    [...sizes].map(([size,roles])=>size+' · '+(roles.size===2?'главный и фоновый':roles.has('main')?'главный':'фоновый')).join('; ')
+  ).join('\n'):'Предметы пока не загружены.';
+}
 function status(text,error=false) {
   $('status').textContent=text;
   $('status').className=error?'error':'';
+}
+function showAlert(text,error=false) {
+  clearTimeout(alertTimer);
+  const alert=$('actionAlert');
+  alert.textContent=text;
+  alert.className=error?'error':'';
+  alert.hidden=false;
+  alertTimer=setTimeout(()=>{alert.hidden=true;},error?7000:4500);
 }
 function updateButtons() {
   $('scan').disabled=busy;
@@ -214,6 +339,7 @@ function renderPreview(message) {
 }
 function send(type,data={}) {
   if (busy) return;
+  activeAction=type;
   busy=true;
   status('Выполняю…');
   updateButtons();
@@ -221,7 +347,7 @@ function send(type,data={}) {
 }
 function getPalette(id='palette') {
   const value=$(id).value;
-  if (value==='custom') return custom;
+  if (value.startsWith('custom:')) return customPalettes[Number(value.slice(7))];
   return value===''?null:schemes[Number(value)];
 }
 function clearDownload() {
@@ -287,7 +413,10 @@ $('catalogImport').onclick=async()=>{
     }
     send('importCatalog',{name:$('catalogName').value,size:$('catalogSize').value,role:$('catalogRole').value,
       svg:new XMLSerializer().serializeToString(doc.documentElement)});
-  } catch(error) {$('catalogFeedback').textContent=error.message;}
+  } catch(error) {
+    $('catalogFeedback').textContent=error.message;
+    showAlert(error.message,true);
+  }
 };
 $('export').onclick=()=>{clearDownload();send('export');};
 $('import').onchange=async event=>{
@@ -300,29 +429,44 @@ $('import').onchange=async event=>{
     if (!data || typeof data.name!=='string' || !data.name.trim() || !hex(data.canvas) ||
         !['background','objects'].every(k=>Array.isArray(data[k])&&data[k].length===4&&data[k].every(hex)))
       throw Error('Ожидается JSON с name, canvas и четырьмя HEX-цветами в background и objects.');
-    custom=data;
-    for (const id of ['palette','editPalette']) {
-      const select=$(id);
-      const option=[...select.options].find(o=>o.value==='custom')||select.appendChild(new Option('', 'custom'));
-      option.textContent=custom.name;
-      select.value='custom';
-    }
-    status('Палитра загружена. Примените её к выбранной композиции или соберите новую.');
-  } catch(error) { status(error.message,true); }
+    send('savePalette',{palette:data});
+  } catch(error) {
+    status(error.message,true);
+    showAlert(error.message,true);
+  }
   finally { event.target.value=''; }
 };
 onmessage=event=>{
   const message=event.data.pluginMessage;
   if (!message) return;
+  if (message.type==='windowSize') resizeWindow(message.width,message.height);
+  if (message.type==='customPalettes') {
+    customPalettes=message.palettes;
+    renderPaletteRows('customPaletteReport',customPalettes,'Свои палитры пока не загружены.');
+    for (const id of ['palette','editPalette']) {
+      const select=$(id);
+      const previous=select.value;
+      for (const option of [...select.options]) if (option.value.startsWith('custom:')) option.remove();
+      customPalettes.forEach((palette,index)=>select.add(new Option(palette.name,'custom:'+index)));
+      select.value=Number.isInteger(message.importedIndex)?'custom:'+message.importedIndex:previous;
+    }
+    if (Number.isInteger(message.importedIndex)) {
+      const confirmation='Палитра «'+customPalettes[message.importedIndex].name+'» загружена.';
+      status(confirmation+' Примените её к выбранной композиции или соберите новую.');
+      showAlert(confirmation);
+    }
+  }
   if (message.type==='catalog') {
     catalogCount=message.count;
     schemes=message.schemes;
     namesBySize=message.namesBySize;
-    $('catalog').textContent=message.count+' вариантов · '+message.names.join(', ')+
-      (message.sourcePalettes?' · Палитры прочитаны из Figma':'');
-    $('schemeColors').textContent=message.sourcePalettes?schemes.map(p=>p.name+' '+p.canvas).join(' · '):'';
+    $('catalog').textContent='Предметов: '+message.originalNames.length+' · вариантов: '+message.originalCount;
+    $('originalNames').textContent=message.originalNames.join(', ');
+    renderPaletteRows('schemeColors',schemes,'Палитры не найдены.');
+    renderImportedItems(message.importedItems);
     $('issues').textContent=message.issues.join('\n');
-    status(message.issues.length?'Каталог собран. Замечания доступны в разделе «Пополнение каталога».':'Каталог собран.');
+    status(message.issues.length?'Каталог собран. Замечания доступны в разделе «Состояние каталога».':'Каталог собран.');
+    if (activeAction==='scan') showAlert('Каталог обновлён. Вариантов: '+message.count+'.');
     updateQueryPicker();
     requestPreview();
   }
@@ -342,6 +486,7 @@ onmessage=event=>{
       $('catalogFeedback').textContent=message.text;
       if (!message.error) $('catalogSvg').value='';
     } else status(message.text,message.error);
+    if (activeAction!=='init' || message.error) showAlert(message.text,message.error);
   }
   if (message.type==='svg') {
     svgURL=URL.createObjectURL(new Blob([message.raw],{type:'image/svg+xml;charset=utf-8'}));
@@ -349,8 +494,9 @@ onmessage=event=>{
     $('download').download=message.name;
     $('download').hidden=false;
     status('SVG готов к скачиванию.');
+    showAlert('SVG готов к скачиванию.');
   }
-  if (message.type==='ready') {busy=false;updateButtons();}
+  if (message.type==='ready') {busy=false;activeAction='';updateButtons();}
 };
-send('scan');
+send('init');
 </script>

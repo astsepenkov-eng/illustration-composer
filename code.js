@@ -309,6 +309,12 @@ function register() {
   figma.showUI(__html__,{width:390,height:690,themeColors:true});
   let catalog;
   let busy=false;
+  async function loadCustomPalettes() {
+    const saved=await figma.clientStorage.getAsync('customPalettes');
+    if (Array.isArray(saved)) return saved.map(validatePalette);
+    const previous=await figma.clientStorage.getAsync('customPalette');
+    return previous?[validatePalette(previous)]:[];
+  }
   const post = (type,data) => figma.ui.postMessage({type,...data});
   const availableNames = size => (catalog?.names||[]).filter(name=>['main','background'].some(role=>catalog.variants.has(slot(name,size,role))));
   const availableRoles = (name,size) => ({
@@ -356,8 +362,16 @@ function register() {
     catalog=indexLibrary(page);
     if (!catalog.palettes) catalog.issues.push('Образцы палитр не распознаны. Показаны резервные схемы.');
     const namesBySize={L:availableNames('L'),S:availableNames('S')};
+    const originalNames=new Set();
+    const importedItems=[];
+    let originalCount=0;
+    for (const [key,node] of catalog.variants) {
+      const [name,size,role]=key.split('|');
+      if (node.getPluginData?.('catalogItem')) importedItems.push({name,size,role});
+      else { originalNames.add(name); originalCount++; }
+    }
     post('catalog',{count:catalog.variants.size,issues:catalog.issues,schemes:catalog.palettes||schemes,
-      sourcePalettes:Boolean(catalog.palettes),namesBySize,names:[...new Set([...namesBySize.L,...namesBySize.S])]});
+      sourcePalettes:Boolean(catalog.palettes),namesBySize,originalCount,originalNames:[...originalNames],importedItems});
     postSelection();
   }
   function source(name,size,role) {
@@ -551,6 +565,17 @@ function register() {
     post('svg',{raw,name:frame.name.replace(/[<>:"/\\|?*]/g,'_')+'.svg'});
   }
   figma.ui.onmessage=async message=>{
+    if (message.type==='resizeWindow') {
+      if (!Number.isFinite(message.width) || !Number.isFinite(message.height)) return;
+      const width=Math.min(1100,Math.max(320,Math.round(message.width)));
+      const height=Math.min(1000,Math.max(300,Math.round(message.height)));
+      figma.ui.resize(width,height);
+      if (message.remember) {
+        try { await figma.clientStorage.setAsync('windowSize',{width,height}); }
+        catch { /* Resizing still works for this session. */ }
+      }
+      return;
+    }
     if (message.type==='preview') {
       try { post('preview',{id:message.id,items:resolveSubjects(message)}); }
       catch(error) { post('preview',{id:message.id,error:error.message}); }
@@ -559,7 +584,23 @@ function register() {
     if (busy) return;
     busy=true;
     try {
+      if (message.type==='init') {
+        const windowSize=await figma.clientStorage.getAsync('windowSize');
+        if (windowSize && Number.isFinite(windowSize.width) && Number.isFinite(windowSize.height))
+          post('windowSize',windowSize);
+        await scan();
+        post('customPalettes',{palettes:await loadCustomPalettes()});
+      }
       if (message.type==='scan') await scan();
+      if (message.type==='savePalette') {
+        const palette=validatePalette(message.palette);
+        const palettes=await loadCustomPalettes();
+        const existing=palettes.findIndex(item=>normalize(item.name.trim())===normalize(palette.name.trim()));
+        const index=existing<0?palettes.length:existing;
+        palettes[index]=palette;
+        await figma.clientStorage.setAsync('customPalettes',palettes);
+        post('customPalettes',{palettes,importedIndex:index});
+      }
       if (message.type==='importCatalog') await importCatalogItem(message);
       if (message.type==='build') build(message);
       if (message.type==='add') addSubject(message);

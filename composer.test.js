@@ -159,8 +159,9 @@ test('plugin messages scan, assemble, recolor, change role and export',async()=>
     variant.clone=()=>editable(variant.name,'GROUP');
   const figma={
     root:{children:[library]},currentPage:workPage,showUI(){},on(){},
+    clientStorage:{data:new Map(),async getAsync(key){return this.data.get(key);},async setAsync(key,value){this.data.set(key,value);}},
     viewport:{center:{x:0,y:0},scrollAndZoomIntoView(){}},
-    ui:{postMessage(event){log.push(event);}},
+    ui:{postMessage(event){log.push(event);},resize(width,height){log.push({type:'resized',width,height});}},
     createFrame(){return editable('Frame','FRAME');},
     createNodeFromSvg(){
       const parsed=editable('SVG','FRAME');
@@ -170,6 +171,17 @@ test('plugin messages scan, assemble, recolor, change role and export',async()=>
     }
   };
   vm.runInNewContext(fs.readFileSync(require.resolve('./code.js'),'utf8'),{figma,__html__:''});
+  await figma.ui.onmessage({type:'resizeWindow',width:640,height:810,remember:true});
+  assert.deepEqual(log.find(msg=>msg.type==='resized'),{type:'resized',width:640,height:810});
+  const customPalette=require('./palette-example.json');
+  await figma.clientStorage.setAsync('customPalette',customPalette);
+  await figma.ui.onmessage({type:'savePalette',palette:{...customPalette,name:'Утро у моря'}});
+  await figma.ui.onmessage({type:'init'});
+  const restoredWindow=log.find(msg=>msg.type==='windowSize');
+  assert.equal(restoredWindow.width,640);
+  assert.equal(restoredWindow.height,810);
+  assert.deepEqual(Array.from(log.findLast(msg=>msg.type==='customPalettes').palettes,palette=>palette.name),[customPalette.name,'Утро у моря']);
+  assert.equal(log.findLast(msg=>msg.type==='customPalettes').importedIndex,undefined);
   await figma.ui.onmessage({type:'scan'});
   assert.equal(log.find(msg=>msg.type==='catalog').count,8);
   assert.equal(log.findLast(msg=>msg.type==='selection').canExport,false);
@@ -223,6 +235,10 @@ test('plugin messages scan, assemble, recolor, change role and export',async()=>
   assert.equal(log.findLast(msg=>msg.type==='selection').canExport,false);
   await figma.ui.onmessage({type:'importCatalog',name:'Новая группа',size:'S',role:'background',svg:'<svg/>'});
   assert.ok(log.findLast(msg=>msg.type==='catalog').namesBySize.S.includes('Новая группа'));
+  const updatedCatalog=log.findLast(msg=>msg.type==='catalog');
+  assert.equal(updatedCatalog.originalCount,updatedCatalog.count-1);
+  assert.ok(!updatedCatalog.originalNames.includes('Новая группа'));
+  assert.equal(updatedCatalog.importedItems[0].name,'Новая группа');
   await figma.ui.onmessage({...request,query:'Новая группа'});
   assert.match(workPage.selection[0].children[0].name,/Новая группа.*фон/);
   assert.equal(log.filter(msg=>msg.error).length,0);

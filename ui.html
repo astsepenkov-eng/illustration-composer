@@ -11,6 +11,7 @@ h1 { font-size:18px; margin:0 0 12px }
 label { display:block; font-weight:550 }
 select,textarea,button,input { font:inherit }
 textarea,select,button { width:100%; margin:4px 0 8px; border:1px solid var(--figma-color-border,#bbb); border-radius:6px; padding:7px; color:inherit; background:var(--figma-color-bg-secondary,#f4f4f4) }
+#catalogName { display:block; width:100%; margin:4px 0 8px; border:1px solid var(--figma-color-border,#bbb); border-radius:6px; padding:7px; color:inherit; background:var(--figma-color-bg-secondary,#f4f4f4) }
 textarea { resize:vertical; min-height:64px }
 button { cursor:pointer }
 button.primary { background:var(--figma-color-bg-brand,#087bdc); color:var(--figma-color-text-onbrand,#fff); border-color:transparent; font-weight:650 }
@@ -24,7 +25,9 @@ legend { padding:0 4px; font-weight:550 }
 #subjects { max-height:165px; overflow:auto }
 .subject { display:grid; grid-template-columns:1fr 1fr; align-items:center; gap:8px }
 .subject select { margin:3px 0 }
-.add-subject { margin-top:8px }
+.edit-subsection { margin-top:12px; padding-top:12px }
+.edit-action { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:end; gap:8px }
+.edit-action select, .edit-action button { min-height:36px }
 #previewStatus { margin:2px 0 4px }
 small { display:block; color:var(--figma-color-text-secondary,#555) }
 details { margin-top:9px; padding:8px 10px; border:1px solid var(--figma-color-border,#bbb); border-radius:6px }
@@ -72,17 +75,23 @@ details .help { margin:6px 0 9px }
 <details>
   <summary>Изменение текущей композиции</summary>
   <small class="help">Выделите фрейм, созданный плагином, чтобы поменять его формат или палитру либо добавить предмет. Чтобы сменить роль предмета, выделите его внутри фрейма.</small>
-  <div class="row">
-    <label>Новый формат
-      <select id="editFormat"><option value="wide">Горизонтальный</option><option value="square">Квадрат</option><option value="vertical">Вертикальный</option></select>
-    </label>
-    <label>Новая палитра <select id="editPalette"></select></label>
-  </div>
-  <div class="row">
-    <button id="formatAction" disabled>Применить формат</button>
-    <button id="paletteAction" disabled>Применить палитру</button>
-  </div>
-  <fieldset class="add-subject">
+  <fieldset class="edit-subsection">
+    <legend>Изменить формат</legend>
+    <div class="edit-action">
+      <label>Новый формат
+        <select id="editFormat"><option value="wide">Горизонтальный</option><option value="square">Квадрат</option><option value="vertical">Вертикальный</option></select>
+      </label>
+      <button id="formatAction" aria-label="Применить формат" disabled>Применить</button>
+    </div>
+  </fieldset>
+  <fieldset class="edit-subsection">
+    <legend>Изменить цвет</legend>
+    <div class="edit-action">
+      <label>Новая палитра <select id="editPalette"></select></label>
+      <button id="paletteAction" aria-label="Применить палитру" disabled>Применить</button>
+    </div>
+  </fieldset>
+  <fieldset class="edit-subsection">
     <legend>Добавить предмет</legend>
     <div class="row">
       <label>Предмет <select id="subject"></select></label>
@@ -94,8 +103,16 @@ details .help { margin:6px 0 9px }
 </details>
 <details>
   <summary>Пополнение каталога</summary>
-  <small class="help">Чтобы добавить недостающий вариант знакомого предмета, поместите исходную векторную группу на страницу «Библиотека компонентов», в нужный раздел L или S и под нужную роль. Затем обновите каталог, чтобы вариант появился в списках.</small>
-  <button id="scan">Обновить каталог</button>
+  <small class="help">Загрузите SVG одного предмета из исходной библиотеки. Чтобы связать версии одного предмета, используйте одинаковое название для всех размеров и ролей.</small>
+  <label>Название предмета <input id="catalogName" type="text" maxlength="60"></label>
+  <div class="row">
+    <label>Детализация <select id="catalogSize"><option>L</option><option>S</option></select></label>
+    <label>Роль <select id="catalogRole"><option value="main">Главный</option><option value="background">Фоновый</option></select></label>
+  </div>
+  <label class="palette-upload">Файл SVG <input id="catalogSvg" type="file" accept=".svg,image/svg+xml"></label>
+  <button id="catalogImport" disabled>Добавить в каталог</button>
+  <small id="catalogFeedback" role="status"></small>
+  <button id="scan">Перечитать библиотеку Figma</button>
   <small id="catalog">Загружаю каталог…</small>
   <small id="schemeColors"></small>
   <small id="issues"></small>
@@ -121,6 +138,7 @@ function status(text,error=false) {
 }
 function updateButtons() {
   $('scan').disabled=busy;
+  $('catalogImport').disabled=busy||!$('catalogName').value.trim()||!$('catalogSvg').files.length;
   $('examples').disabled=busy||!catalogCount;
   for (const id of ['role','paletteAction']) $(id).disabled=busy||!selectionItems.length;
   $('export').disabled=busy||!canExport;
@@ -133,10 +151,12 @@ function updateAddRole() {
   const subject=selectionItems.find(item=>item.name===$('subject').value);
   const select=$('addRole');
   const background=select.options[1];
+  select.options[0].disabled=Boolean(subject&&!subject.main);
   background.disabled=!subject?.background;
   background.textContent=subject?.background?'Фоновый':'Фон недоступен';
   select.disabled=!subject;
   if (background.disabled) select.value='main';
+  else if (!subject.main) select.value='background';
   updateButtons();
 }
 function updateQueryPicker() {
@@ -181,10 +201,10 @@ function renderPreview(message) {
     row.append(document.createTextNode(item.name));
     const select=document.createElement('select');
     select.setAttribute('aria-label','Роль: '+item.name+(occurrence>1?' '+occurrence:''));
-    select.append(new Option(item.background?'Главный':'Главный · фон недоступен','main'));
+    if (item.main) select.append(new Option(item.background?'Главный':'Главный · фон недоступен','main'));
     if (item.background) select.append(new Option('Фоновый','background'));
-    select.disabled=!item.background;
-    select.value=item.background?(chosenRoles.get(key)||'main'):'main';
+    select.disabled=!item.background||!item.main;
+    select.value=!item.main?'background':item.background?(chosenRoles.get(key)||'main'):'main';
     select.onchange=()=>chosenRoles.set(key,select.value);
     row.append(select);
     $('subjects').append(row);
@@ -243,6 +263,32 @@ $('add').onclick=()=>{clearDownload();send('add',{name:$('subject').value,role:$
 $('formatAction').onclick=()=>{clearDownload();send('format',{format:$('editFormat').value});};
 $('examples').onclick=()=>{clearDownload();send('examples',{size:$('demoSize').value});};
 $('scan').onclick=()=>send('scan');
+$('catalogName').oninput=updateButtons;
+$('catalogSvg').onchange=updateButtons;
+$('catalogImport').onclick=async()=>{
+  $('catalogFeedback').textContent='';
+  try {
+    const file=$('catalogSvg').files[0];
+    if (!file || file.size>2_000_000) throw Error('Выберите исходный SVG до 2 МБ.');
+    const raw=await file.text();
+    if (/<!DOCTYPE/i.test(raw)) throw Error('SVG с объявлением DOCTYPE не поддерживается.');
+    const doc=new DOMParser().parseFromString(raw,'image/svg+xml');
+    if (doc.querySelector('parsererror') || doc.documentElement.localName!=='svg' ||
+        doc.documentElement.namespaceURI!=='http://www.w3.org/2000/svg') throw Error('Файл должен быть корректным SVG.');
+    for (const element of doc.querySelectorAll('*')) {
+      if (['image','script','foreignobject','style','iframe'].includes(element.localName.toLowerCase()))
+        throw Error('Загрузите векторный SVG без картинок, скриптов и таблиц стилей.');
+      for (const attribute of element.attributes) {
+        const value=attribute.value.trim();
+        if (/^on/i.test(attribute.localName) || (attribute.localName==='href'&&!value.startsWith('#')) ||
+            [...value.matchAll(/url\(\s*["']?([^)"']+)/gi)].some(match=>!match[1].trim().startsWith('#')))
+          throw Error('SVG должен содержать только внутренние ссылки.');
+      }
+    }
+    send('importCatalog',{name:$('catalogName').value,size:$('catalogSize').value,role:$('catalogRole').value,
+      svg:new XMLSerializer().serializeToString(doc.documentElement)});
+  } catch(error) {$('catalogFeedback').textContent=error.message;}
+};
 $('export').onclick=()=>{clearDownload();send('export');};
 $('import').onchange=async event=>{
   try {
@@ -291,7 +337,12 @@ onmessage=event=>{
     updateAddRole();
   }
   if (message.type==='preview') renderPreview(message);
-  if (message.type==='status') status(message.text,message.error);
+  if (message.type==='status') {
+    if (message.scope==='catalog') {
+      $('catalogFeedback').textContent=message.text;
+      if (!message.error) $('catalogSvg').value='';
+    } else status(message.text,message.error);
+  }
   if (message.type==='svg') {
     svgURL=URL.createObjectURL(new Blob([message.raw],{type:'image/svg+xml;charset=utf-8'}));
     $('download').href=svgURL;

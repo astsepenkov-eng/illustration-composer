@@ -42,6 +42,7 @@ test('direct names and an unseen title produce eligible objects',()=>{
   assert.deepEqual(matchQuery('Идеи всегда на связи','meaning',['Лампа','Телефон','Книга']),['Телефон','Лампа']);
   assert.deepEqual(matchQuery('Библиотека в кармане','meaning',['Книга','Телефон']),['Книга','Телефон']);
   assert.deepEqual(matchQuery('смартфон','names',['Телефон']),['Телефон']);
+  assert.deepEqual(matchQuery('новая группа','names',['Новая группа']),['Новая группа']);
   assert.throws(()=>matchQuery('океан','meaning',['Книга','Телефон']),/не найдены/);
 });
 test('layout shares a scale and follows the frame orientation',()=>{
@@ -127,6 +128,10 @@ test('plugin messages scan, assemble, recolor, change role and export',async()=>
   const fs=require('node:fs');
   const library=node('PAGE','Библиотека компонентов',0,[section('L'),section('S')]);
   library.loadAsync=async()=>{};
+  for (const sectionNode of library.children) {
+    sectionNode.appendChild=child=>sectionNode.children.push(child);
+    sectionNode.resizeWithoutConstraints=(w,h)=>{sectionNode.width=w;sectionNode.height=h;};
+  }
   const workPage={selection:[],children:[]};
   const log=[];
   function editable(name,type,width=50,height=40) {
@@ -156,7 +161,13 @@ test('plugin messages scan, assemble, recolor, change role and export',async()=>
     root:{children:[library]},currentPage:workPage,showUI(){},on(){},
     viewport:{center:{x:0,y:0},scrollAndZoomIntoView(){}},
     ui:{postMessage(event){log.push(event);}},
-    createFrame(){return editable('Frame','FRAME');}
+    createFrame(){return editable('Frame','FRAME');},
+    createNodeFromSvg(){
+      const parsed=editable('SVG','FRAME');
+      parsed.findOne=filter=>[{type:'VECTOR'}].find(filter);
+      parsed.clone=()=>editable('SVG','FRAME');
+      return parsed;
+    }
   };
   vm.runInNewContext(fs.readFileSync(require.resolve('./code.js'),'utf8'),{figma,__html__:''});
   await figma.ui.onmessage({type:'scan'});
@@ -210,5 +221,9 @@ test('plugin messages scan, assemble, recolor, change role and export',async()=>
   assert.deepEqual(Array.from(workPage.selection,frame=>[frame.width,frame.height]),[[1200,630],[1000,1000],[700,1050]]);
   assert.ok(workPage.selection.every(frame=>frame.name.includes(' · S · ')));
   assert.equal(log.findLast(msg=>msg.type==='selection').canExport,false);
+  await figma.ui.onmessage({type:'importCatalog',name:'Новая группа',size:'S',role:'background',svg:'<svg/>'});
+  assert.ok(log.findLast(msg=>msg.type==='catalog').namesBySize.S.includes('Новая группа'));
+  await figma.ui.onmessage({...request,query:'Новая группа'});
+  assert.match(workPage.selection[0].children[0].name,/Новая группа.*фон/);
   assert.equal(log.filter(msg=>msg.error).length,0);
 });

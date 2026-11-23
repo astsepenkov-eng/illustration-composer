@@ -90,10 +90,13 @@ function validatePalette(value) {
 function indexLibrary(page) {
   const variants = new Map();
   const issues = [];
+  const sections = {};
+  const names = new Set(subjects.map(([name])=>name));
   let palettes;
   for (const size of ['L','S']) {
     const section = page.findOne(node=>node.type==='SECTION' && normalize(node.name).trim()===normalize('Размер '+size));
     if (!section) { issues.push('Не найдена секция «Размер '+size+'».'); continue; }
+    sections[size]=section;
     const mainLabel = section.findOne(n=>n.type==='TEXT' && /^главные объекты$/i.test(n.characters.trim()));
     const backLabel = section.findOne(n=>n.type==='TEXT' && /^фоновые объекты$/i.test(n.characters.trim()));
     if (!mainLabel || !backLabel) { issues.push(size+': отсутствуют подписи ролей.'); continue; }
@@ -102,6 +105,15 @@ function indexLibrary(page) {
     const backgroundY = box(backLabel).y;
     const pending = [];
     for (const node of section.children) {
+      const imported=node.getPluginData?.('catalogItem');
+      if (imported) {
+        const {name,role}=JSON.parse(imported);
+        names.add(name);
+        const key=slot(name,size,role);
+        if (variants.has(key)) issues.push('Дубликат '+key+' ('+node.name+').');
+        else variants.set(key,node);
+        continue;
+      }
       const bounds = box(node);
       if (!node.visible || !isContainer(node) || bounds.y < mainY || /^фон$/i.test(node.name)) continue;
       const role = bounds.y >= backgroundY ? 'background' : 'main';
@@ -134,22 +146,30 @@ function indexLibrary(page) {
     for (const size of ['L','S']) for (const role of ['main','background'])
       if (!variants.has(slot(name,size,role))) issues.push('Нет пары: '+slot(name,size,role));
   }
-  return {variants,issues,palettes};
+  return {variants,issues,palettes,sections,names:[...names]};
+}
+function resolveName(value,available) {
+  const known=subjectName(value);
+  return available.find(name=>normalize(name)===normalize(value))||available.find(name=>name===known);
 }
 function matchQuery(query, mode, available) {
   const value = normalize(query.trim());
   if (!value) throw Error('Введите названия предметов, заголовок или метафору.');
   if (mode==='names') {
     const names = value.split(/[,;\n]+/).map(s=>s.trim()).filter(Boolean);
-    const unknown = names.filter(n=>!available.includes(subjectName(n)));
+    const unknown = names.filter(n=>!resolveName(n,available));
     if (unknown.length) throw Error('Недоступны в этом размере: '+unknown.join(', ')+'.');
     if (names.length>6) throw Error('В одном запросе можно указать до шести предметов.');
-    return names.map(subjectName);
+    return names.map(name=>resolveName(name,available));
   }
   const words = value.match(/[\p{L}\p{N}]+/gu) || [];
-  const ranking = subjects.filter(([name])=>available.includes(name)).map(([name,tags])=>{
-    const stems = normalize(tags).split(' ');
-    const score = words.reduce((sum,word)=>sum+(word===normalize(name)?3:stems.some(stem=>word.startsWith(stem))?1:0),0);
+  const knownOrder=subjects.map(([name])=>name);
+  const ordered=[...knownOrder.filter(name=>available.includes(name)),...available.filter(name=>!knownOrder.includes(name))];
+  const ranking = ordered.map(name=>{
+    const tags=subjects.find(([label])=>label===name)?.[1];
+    const stems = tags?normalize(tags).split(' '):[];
+    const score = words.reduce((sum,word)=>sum+(word===normalize(name)?3:stems.some(stem=>word.startsWith(stem))?1:0),0)
+      +(normalize(name).includes(' ') && value.includes(normalize(name))?3:0);
     return {name,score};
   }).filter(item=>item.score).sort((a,b)=>b.score-a.score);
   if (!ranking.length) throw Error('Подходящие предметы не найдены. Добавьте смысловую подсказку или укажите названия.');
@@ -290,14 +310,44 @@ function register() {
   let catalog;
   let busy=false;
   const post = (type,data) => figma.ui.postMessage({type,...data});
-  const availableNames = size => subjects.map(([name])=>name).filter(name=>catalog?.variants.has(slot(name,size,'main')));
+  const availableNames = size => (catalog?.names||[]).filter(name=>['main','background'].some(role=>catalog.variants.has(slot(name,size,role))));
+  const availableRoles = (name,size) => ({
+    name,main:catalog.variants.has(slot(name,size,'main')),background:catalog.variants.has(slot(name,size,'background'))
+  });
   function postSelection() {
     let size;
     try { size=JSON.parse(selectedFrame().getPluginData('composition')).size; }
     catch { /* The current selection is outside a composition. */ }
-    post('selection',{canExport:Boolean(size)&&figma.currentPage.selection.length===1,items:size?availableNames(size).map(name=>({
-      name,background:catalog.variants.has(slot(name,size,'background'))
-    })):[]});
+    post('selection',{canExport:Boolean(size)&&figma.currentPage.selection.length===1,
+      items:size?availableNames(size).map(name=>availableRoles(name,size)):[]});
+  }
+  async function importCatalogItem({name,size,role,svg}) {
+    const label=String(name||'').trim().replace(/\s+/g,' ');
+    if (!label || label.length>60 || /[|,;]/.test(label)) throw Error('Введите название без запятых, точек с запятой и вертикальных черт.');
+    const section=catalog?.sections[size];
+    if (!['L','S'].includes(size) || !section || !['main','background'].includes(role)) throw Error('Выберите детализацию и роль.');
+    const canonical=resolveName(label,catalog.names)||label;
+    if (catalog.variants.has(slot(canonical,size,role))) throw Error('Такой вариант уже есть. Выберите другую детализацию, роль или название.');
+    if (typeof svg!=='string' || !svg || svg.length>2_000_000) throw Error('Выберите исходный SVG до 2 МБ.');
+    const node=figma.createNodeFromSvg(svg);
+    try {
+      if (!node.findOne(child=>child.type==='VECTOR' || child.type==='BOOLEAN_OPERATION' ||
+          ['RECTANGLE','ELLIPSE','LINE','POLYGON','STAR'].includes(child.type)))
+        throw Error('В SVG не найдены векторные фигуры.');
+      const padding=48;
+      const y=section.height+padding;
+      section.appendChild(node);
+      node.name=canonical+' · '+size+' · '+(role==='background'?'фон':'главный');
+      node.x=padding;
+      node.y=y;
+      node.setPluginData('catalogItem',JSON.stringify({name:canonical,role}));
+      section.resizeWithoutConstraints(Math.max(section.width,node.x+node.width+padding),node.y+node.height+padding);
+    } catch (error) {
+      node.remove();
+      throw error;
+    }
+    await scan();
+    post('status',{scope:'catalog',text:'В каталог добавлен предмет: '+canonical+' · '+size+'.'});
   }
   async function scan() {
     const page=figma.root.children.find(n=>normalize(n.name.trim())==='библиотека компонентов');
@@ -338,9 +388,7 @@ function register() {
   }
   function resolveSubjects({size,query,mode}) {
     if (!['L','S'].includes(size)) throw Error('Неизвестный размер.');
-    return matchQuery(query,mode,availableNames(size)).map(name=>({
-      name,background:catalog.variants.has(slot(name,size,'background'))
-    }));
+    return matchQuery(query,mode,availableNames(size)).map(name=>availableRoles(name,size));
   }
   function build(message, announce=true) {
     const {size,format,query}=message;
@@ -350,7 +398,7 @@ function register() {
     const names=subjects.map(item=>item.name);
     if (!names.length) throw Error('Добавьте хотя бы один предмет.');
     const [width,height]=formats[format];
-    const roles=subjects.map((item,i)=>item.background && message.roles?.[i]==='background'?'background':'main');
+    const roles=subjects.map((item,i)=>!item.main || (item.background && message.roles?.[i]==='background')?'background':'main');
     const position=freePosition({
       x:figma.viewport.center.x-width/2+(message.offsetX||0),
       y:figma.viewport.center.y-height/2+(message.offsetY||0)
@@ -385,7 +433,7 @@ function register() {
   function addSubject(message) {
     const frame=selectedFrame();
     const {size,palette,scale}=JSON.parse(frame.getPluginData('composition'));
-    const name=subjectName(message.name);
+    const name=resolveName(message.name,availableNames(size));
     if (!name) throw Error('Выберите предмет из каталога.');
     const role=message.role==='background'?'background':'main';
     const occupied=frame.children.filter(child=>child.visible).map(itemBounds);
@@ -512,13 +560,14 @@ function register() {
     busy=true;
     try {
       if (message.type==='scan') await scan();
+      if (message.type==='importCatalog') await importCatalogItem(message);
       if (message.type==='build') build(message);
       if (message.type==='add') addSubject(message);
       if (message.type==='format') applyFormat(message.format);
       if (message.type==='examples') buildExamples(message.size);
       if (message.type==='role'||message.type==='palette') update(message);
       if (message.type==='export') await exportSvg();
-    } catch(error) { post('status',{text:error.message,error:true}); }
+    } catch(error) { post('status',{scope:message.type==='importCatalog'?'catalog':undefined,text:error.message,error:true}); }
     finally { busy=false; postSelection(); post('ready',{}); }
   };
   figma.on('selectionchange',postSelection);

@@ -1,5 +1,11 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const samplePalette = {
+  name:'Тестовая палитра',
+  canvas:'#FFFFFF',
+  background:['#DDDDDD','#BBBBBB','#888888','#444444'],
+  objects:['#FFEEAA','#FF9966','#993355','#551144']
+};
 const { findItemPosition,itemBounds,planItemPlacement } = require('./code.js');
 const { indexLibrary, matchQuery, layout, validatePalette, recolor, schemes, bytesToText, repairSvgIds, freePosition, readLibraryPalettes } = require('./code.js');
 
@@ -98,7 +104,7 @@ test('reads exact swatches from separate background and object columns',()=>{
   assert.equal(result[2].canvas,'#040000');
 });
 test('background recolor maps all visible fills and strokes to background shades',()=>{
-  const palette=validatePalette(require('./palette-example.json'));
+  const palette=validatePalette(samplePalette);
   const child={type:'VECTOR',fills:[{type:'SOLID',color:{r:1,g:0,b:0}}],strokes:[{type:'SOLID',color:{r:0,g:0,b:0}}]};
   recolor({type:'GROUP',children:[child]},'background',palette);
   const hex=c=>'#'+[c.r,c.g,c.b].map(n=>Math.round(n*255).toString(16).padStart(2,'0')).join('').toUpperCase();
@@ -173,7 +179,7 @@ test('plugin messages scan, assemble, recolor, change role and export',async()=>
   vm.runInNewContext(fs.readFileSync(require.resolve('./code.js'),'utf8'),{figma,__html__:''});
   await figma.ui.onmessage({type:'resizeWindow',width:640,height:810,remember:true});
   assert.deepEqual(log.find(msg=>msg.type==='resized'),{type:'resized',width:640,height:810});
-  const customPalette=require('./palette-example.json');
+  const customPalette=samplePalette;
   await figma.clientStorage.setAsync('customPalette',customPalette);
   await figma.ui.onmessage({type:'savePalette',palette:{...customPalette,name:'Утро у моря'}});
   await figma.ui.onmessage({type:'init'});
@@ -201,7 +207,7 @@ test('plugin messages scan, assemble, recolor, change role and export',async()=>
   workPage.selection=[frame.children[0]];
   await figma.ui.onmessage({type:'role'});
   assert.match(workPage.selection[0].name,/Книга.*главный/);
-  await figma.ui.onmessage({type:'palette',palette:require('./palette-example.json')});
+  await figma.ui.onmessage({type:'palette',palette:samplePalette});
   assert.equal(workPage.selection[0],frame);
   assert.equal(frame.children.length,2);
   await figma.ui.onmessage({type:'export'});

@@ -15,7 +15,12 @@ button { cursor:pointer }
 button.primary { background:var(--figma-color-bg-brand,#087bdc); color:var(--figma-color-text-onbrand,#fff); border-color:transparent; font-weight:650 }
 button:disabled { opacity:.5; cursor:default }
 .row { display:grid; grid-template-columns:1fr 1fr; gap:8px }
-.check { display:flex; align-items:center; gap:6px; margin:1px 0 7px; font-weight:400 }
+fieldset { margin:0 0 8px; padding:4px 8px; border:1px solid var(--figma-color-border,#bbb); border-radius:6px }
+legend { padding:0 4px; font-weight:550 }
+#subjects { max-height:165px; overflow:auto }
+.subject { display:grid; grid-template-columns:1fr 1fr; align-items:center; gap:8px }
+.subject select { margin:3px 0 }
+#previewStatus { margin:2px 0 4px }
 small { display:block; color:var(--figma-color-text-secondary,#555) }
 details { margin-top:9px }
 summary { cursor:pointer }
@@ -42,7 +47,11 @@ summary { cursor:pointer }
       <option value="">Исходные цвета</option><option value="0">Сиреневая</option><option value="1">Персиковая</option><option value="2">Бирюзовая</option>
     </select>
   </label>
-  <label class="check"><input id="background" type="checkbox" checked> Добавить фоновый предмет, если есть вариант</label>
+  <fieldset id="roles" hidden>
+    <legend>Роли предметов</legend>
+    <small id="previewStatus" role="status"></small>
+    <div id="subjects"></div>
+  </fieldset>
   <button class="primary" id="build" disabled>Собрать композицию</button>
 </form>
 <div class="row">
@@ -65,13 +74,58 @@ summary { cursor:pointer }
 <script>
 const $=id=>document.getElementById(id);
 let catalogCount=0, busy=false, custom=null, schemes=[], svgURL=null;
+let previewId=0, previewTimer, previewItems=[];
+const chosenRoles=new Map();
 function status(text,error=false) {
   $('status').textContent=text;
   $('status').className=error?'error':'';
 }
 function updateButtons() {
   $('scan').disabled=busy;
-  for (const id of ['build','role','export','paletteAction','add','examples']) $(id).disabled=busy||!catalogCount;
+  for (const id of ['role','export','paletteAction','add','examples']) $(id).disabled=busy||!catalogCount;
+  $('build').disabled=busy||!catalogCount||!previewItems.length;
+}
+function requestPreview() {
+  clearTimeout(previewTimer);
+  const id=++previewId;
+  const query=$('query').value.trim();
+  previewItems=[];
+  $('subjects').replaceChildren();
+  const show=Boolean(query&&catalogCount);
+  $('roles').hidden=!show;
+  $('previewStatus').textContent=show?'Подбираю предметы…':'';
+  updateButtons();
+  if (!show) {
+    if (!query) chosenRoles.clear();
+    return;
+  }
+  previewTimer=setTimeout(()=>parent.postMessage({pluginMessage:{
+    type:'preview',id,query,mode:$('mode').value,size:$('size').value
+  }},'*'),160);
+}
+function renderPreview(message) {
+  if (message.id!==previewId) return;
+  $('previewStatus').textContent=message.error||'';
+  const counts=new Map();
+  previewItems=(message.items||[]).map(item=>{
+    const occurrence=(counts.get(item.name)||0)+1;
+    counts.set(item.name,occurrence);
+    const key=item.name+' '+occurrence;
+    const row=document.createElement('label');
+    row.className='subject';
+    row.append(document.createTextNode(item.name));
+    const select=document.createElement('select');
+    select.setAttribute('aria-label','Роль: '+item.name+(occurrence>1?' '+occurrence:''));
+    select.append(new Option(item.background?'Главный':'Главный · фон недоступен','main'));
+    if (item.background) select.append(new Option('Фоновый','background'));
+    select.disabled=!item.background;
+    select.value=item.background?(chosenRoles.get(key)||'main'):'main';
+    select.onchange=()=>chosenRoles.set(key,select.value);
+    row.append(select);
+    $('subjects').append(row);
+    return select;
+  });
+  updateButtons();
 }
 function send(type,data={}) {
   if (busy) return;
@@ -93,9 +147,15 @@ function clearDownload() {
 $('composer').onsubmit=event=>{
   event.preventDefault();
   clearDownload();
-  send('build',{query:$('query').value,mode:$('mode').value,size:$('size').value,format:$('format').value,palette:getPalette(),withBackground:$('background').checked});
+  if (!previewItems.length) return;
+  send('build',{query:$('query').value,mode:$('mode').value,size:$('size').value,format:$('format').value,palette:getPalette(),roles:previewItems.map(select=>select.value)});
 };
-$('mode').onchange=()=>{$('query').placeholder=$('mode').value==='names'?'Книга, телефон':'Учёба всегда под рукой';};
+$('query').oninput=requestPreview;
+$('size').onchange=requestPreview;
+$('mode').onchange=()=>{
+  $('query').placeholder=$('mode').value==='names'?'Книга, телефон':'Учёба всегда под рукой';
+  requestPreview();
+};
 $('paletteAction').onclick=()=>{clearDownload();send('palette',{palette:getPalette()});};
 $('role').onclick=()=>{clearDownload();send('role');};
 $('add').onclick=()=>{clearDownload();send('add',{name:$('subject').value});};
@@ -130,7 +190,9 @@ onmessage=event=>{
     $('catalog').textContent=message.count+' вариантов · '+message.names.join(', ');
     $('issues').textContent=message.issues.join('\n');
     status(message.issues.length?'Каталог собран. Замечания доступны в разделе «Библиотека и импорт палитры».':'Каталог собран.');
+    requestPreview();
   }
+  if (message.type==='preview') renderPreview(message);
   if (message.type==='status') status(message.text,message.error);
   if (message.type==='svg') {
     svgURL=URL.createObjectURL(new Blob([message.raw],{type:'image/svg+xml;charset=utf-8'}));

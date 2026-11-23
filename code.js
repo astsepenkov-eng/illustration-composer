@@ -197,15 +197,22 @@ function register() {
     if (parent?.type==='FRAME' && parent.getPluginData('composition')) return parent;
     throw Error('Выделите композицию, созданную плагином, или один из её предметов.');
   }
-  function build(message, announce=true) {
-    const {size,format,query,mode,withBackground}=message;
-    const palette=message.palette?validatePalette(message.palette):null;
-    if (!formats[format] || !['L','S'].includes(size)) throw Error('Неизвестный размер или формат.');
+  function resolveSubjects({size,query,mode}) {
+    if (!['L','S'].includes(size)) throw Error('Неизвестный размер.');
     const available=subjects.map(([name])=>name).filter(name=>catalog?.variants.has(slot(name,size,'main')));
-    const names=matchQuery(query,mode,available);
+    return matchQuery(query,mode,available).map(name=>({
+      name,background:catalog.variants.has(slot(name,size,'background'))
+    }));
+  }
+  function build(message, announce=true) {
+    const {size,format,query}=message;
+    const palette=message.palette?validatePalette(message.palette):null;
+    if (!formats[format]) throw Error('Неизвестный формат.');
+    const subjects=resolveSubjects(message);
+    const names=subjects.map(item=>item.name);
     if (!names.length) throw Error('Добавьте хотя бы один предмет.');
     const [width,height]=formats[format];
-    const roles=names.map((name,i)=>withBackground&&i===names.length-1&&i>0&&catalog.variants.has(slot(name,size,'background'))?'background':'main');
+    const roles=subjects.map((item,i)=>item.background && message.roles?.[i]==='background'?'background':'main');
     const frame=figma.createFrame();
     try {
       frame.name=query.trim().slice(0,70)+' · '+size+' · '+width+' × '+height;
@@ -223,7 +230,8 @@ function register() {
         node.x=pos.x;
         node.y=pos.y;
       });
-      if (roles.includes('background')) frame.insertChild(0,items[items.length-1]);
+      const backgrounds=items.filter((_,i)=>roles[i]==='background');
+      backgrounds.forEach((node,i)=>frame.insertChild(i,node));
       if (announce) {
         figma.currentPage.selection=[frame];
         figma.viewport.scrollAndZoomIntoView([frame]);
@@ -257,7 +265,7 @@ function register() {
     ];
     const frames=[];
     try {
-      for (const request of requests) frames.push(build({...request,withBackground:true},false));
+      for (const request of requests) frames.push(build({...request,roles:['main','background']},false));
       figma.currentPage.selection=frames;
       figma.viewport.scrollAndZoomIntoView(frames);
       post('status',{text:'Собраны три примера. Для скачивания выберите один фрейм.'});
@@ -310,6 +318,11 @@ function register() {
     post('svg',{raw,name:frame.name.replace(/[<>:"/\\|?*]/g,'_')+'.svg'});
   }
   figma.ui.onmessage=async message=>{
+    if (message.type==='preview') {
+      try { post('preview',{id:message.id,items:resolveSubjects(message)}); }
+      catch(error) { post('preview',{id:message.id,error:error.message}); }
+      return;
+    }
     if (busy) return;
     busy=true;
     try {

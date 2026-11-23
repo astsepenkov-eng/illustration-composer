@@ -161,6 +161,7 @@ test('plugin messages scan, assemble, recolor, change role and export',async()=>
   vm.runInNewContext(fs.readFileSync(require.resolve('./code.js'),'utf8'),{figma,__html__:''});
   await figma.ui.onmessage({type:'scan'});
   assert.equal(log.find(msg=>msg.type==='catalog').count,8);
+  assert.equal(log.findLast(msg=>msg.type==='selection').canExport,false);
   const request={type:'build',query:'Книга, телефон',mode:'names',size:'S',format:'square'};
   await figma.ui.onmessage({...request,type:'preview',id:1});
   const preview=log.find(msg=>msg.type==='preview');
@@ -168,6 +169,7 @@ test('plugin messages scan, assemble, recolor, change role and export',async()=>
   assert.equal(preview.items.map(item=>item.name+':'+item.background).join(','),'Книга:true,Телефон:true');
   await figma.ui.onmessage(request);
   assert.ok(workPage.selection[0].children.every(child=>child.name.endsWith('главный')));
+  assert.equal(log.findLast(msg=>msg.type==='selection').canExport,true);
   await figma.ui.onmessage({...request,roles:['background','main']});
   const frame=workPage.selection[0];
   assert.equal(frame.children.length,2);
@@ -207,5 +209,6 @@ test('plugin messages scan, assemble, recolor, change role and export',async()=>
   await figma.ui.onmessage({type:'examples',size:'S'});
   assert.deepEqual(Array.from(workPage.selection,frame=>[frame.width,frame.height]),[[1200,630],[1000,1000],[700,1050]]);
   assert.ok(workPage.selection.every(frame=>frame.name.includes(' · S · ')));
+  assert.equal(log.findLast(msg=>msg.type==='selection').canExport,false);
   assert.equal(log.filter(msg=>msg.error).length,0);
 });

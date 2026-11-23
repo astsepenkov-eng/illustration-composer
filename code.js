@@ -295,7 +295,7 @@ function register() {
     let size;
     try { size=JSON.parse(selectedFrame().getPluginData('composition')).size; }
     catch { /* The current selection is outside a composition. */ }
-    post('selection',{items:size?availableNames(size).map(name=>({
+    post('selection',{canExport:Boolean(size)&&figma.currentPage.selection.length===1,items:size?availableNames(size).map(name=>({
       name,background:catalog.variants.has(slot(name,size,'background'))
     })):[]});
   }

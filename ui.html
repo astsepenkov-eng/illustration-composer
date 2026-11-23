@@ -65,10 +65,12 @@ details .help { margin:6px 0 9px }
   </fieldset>
   <button class="primary" id="build" disabled>Собрать композицию</button>
 </form>
+<button class="primary" id="export" disabled>Подготовить SVG</button>
+<a id="download" hidden>Скачать SVG</a>
 <p id="status" role="status" aria-live="polite"></p>
 <details>
   <summary>Изменение текущей композиции</summary>
-  <small class="help">Выделите фрейм, созданный плагином. Здесь можно поменять его формат или палитру, добавить предмет и скачать SVG. Чтобы сменить роль предмета, выделите его внутри фрейма.</small>
+  <small class="help">Выделите фрейм, созданный плагином, чтобы поменять его формат или палитру либо добавить предмет. Чтобы сменить роль предмета, выделите его внутри фрейма.</small>
   <div class="row">
     <label>Новый формат
       <select id="editFormat"><option value="wide">Горизонтальный</option><option value="square">Квадрат</option><option value="vertical">Вертикальный</option></select>
@@ -85,8 +87,6 @@ details .help { margin:6px 0 9px }
   </div>
   <button id="add" disabled>Добавить в выбранную композицию</button>
   <button id="role" disabled>Сменить роль выделенного предмета</button>
-  <button id="export" disabled>Подготовить SVG</button>
-  <a id="download" hidden>Скачать SVG</a>
 </details>
 <details>
   <summary>Пополнение каталога</summary>
@@ -107,6 +107,7 @@ const $=id=>document.getElementById(id);
 let catalogCount=0, busy=false, custom=null, schemes=[], svgURL=null;
 let namesBySize={L:[],S:[]};
 let selectionItems=[];
+let canExport=false;
 $('editPalette').replaceChildren(...Array.from($('palette').options,option=>option.cloneNode(true)));
 let previewId=0, previewTimer, previewItems=[];
 const chosenRoles=new Map();
@@ -117,7 +118,8 @@ function status(text,error=false) {
 function updateButtons() {
   $('scan').disabled=busy;
   $('examples').disabled=busy||!catalogCount;
-  for (const id of ['role','export','paletteAction']) $(id).disabled=busy||!selectionItems.length;
+  for (const id of ['role','paletteAction']) $(id).disabled=busy||!selectionItems.length;
+  $('export').disabled=busy||!canExport;
   $('formatAction').disabled=busy||!selectionItems.length;
   $('add').disabled=busy||!$('subject').value;
   $('build').disabled=busy||!catalogCount||!previewItems.length;
@@ -276,6 +278,7 @@ onmessage=event=>{
   }
   if (message.type==='selection') {
     selectionItems=message.items;
+    canExport=message.canExport;
     const subject=$('subject');
     const previous=subject.value;
     subject.replaceChildren(new Option(selectionItems.length?'Выбрать предмет':'Выделите композицию',''),

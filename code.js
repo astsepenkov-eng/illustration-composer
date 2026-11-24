@@ -208,40 +208,177 @@ function recolor(node, role, palette, source=schemes[0]) {
     }
   });
 }
-function layout(items,width,height,roles=[]) {
-  const transpose=height>width;
-  const horizontal=transpose?height:width;
-  const vertical=transpose?width:height;
-  const rowSize=horizontal/vertical>1.3?3:2;
-  const order=items.map((item,i)=>({i,w:transpose?item.height:item.width,h:transpose?item.width:item.height}));
-  const rows=[];
-  if (width===height && items.length>=3) {
-    const main=order.filter(item=>roles[item.i]!=='background');
-    const anchor=(main.length?main:order).reduce((best,item)=>item.w*item.h>best.w*best.h?item:best);
-    rows.push(order.splice(order.indexOf(anchor),1));
+const sceneRelations = [
+  ['Книга','Телефон',.41,-.16],
+  ['Телефон','Пазлы',.48,-.35],
+  ['Книга','Пазлы',.30,-.69],
+  ['Папка','Кошелек',-.43,.37],
+  ['Кошелек','Монета',.56,.39],
+  ['Папка','Монета',.58,.88],
+  ['Книга','Ручка',-.52,.91],
+  ['Лампа','Книга',.65,.60],
+  ['Лампа','Телефон',-.45,.52],
+  ['Телефон','Ручка',.64,.42],
+  ['Лампа','Ручка',.46,.79],
+  ['Наушники','Растение',-.71,-.63]
+];
+// Offsets between subject centres in wide, square and portrait frames.
+const referenceScenes = [
+  {names:['Наушники','Растение','Пазлы','Монета'], offsets:[
+    [[-.77,-.47],[.79,.26],[-.68,.60]],
+    [[-.61,-.67],[.64,.40],[-.51,.72]],
+    [[.25,-.81],[-.45,.71],[.53,.64]]
+  ], edges:[null,null,null]},
+  {names:['Наушники','Растение','Телефон'], offsets:[
+    [[-.77,-.47],[.75,.48]],
+    [[-.68,-.67],[.48,.88]],
+    [[.25,-.81],[-.43,.82]]
+  ], edges:[null,null,null], squareFocus:true},
+  {names:['Книга','Телефон'], offsets:[[.55,-.34],[.38,-.19],[.57,-.14]], edges:['left','left','left']},
+  {names:['Книга','Пазлы','Ручка'], offsets:[[[-.05,-.37],[-.70,.69]],[[-.14,-.40],[-.48,.85]],[[-.23,-.02],[-.43,.98]]], edges:['right','right','right']},
+  {names:['Папка','Кошелек','Монета'], offsets:[[[-.79,.61],[-.36,.88]],[[-.75,.64],[-.24,.96]],[[-.56,.76],[-.02,1.07]]], edges:['top','right','right']},
+  {names:['Наушники','Растение'], offsets:[[-.82,-.51],[-.61,-.67],[.25,-.81]], edges:['bottom','right','top']},
+  {names:['Лампа','Кошелек','Монета'], offsets:[[[.42,.73],[.93,.46]],[[.26,.86],[.86,.50]],[[.17,1.02],[.76,.58]]], edges:['top','top','top']},
+  {names:['Телефон','Пазлы'], offsets:[[1.05,-.38],[.56,-1.04],[.43,-1.03]], edges:[null,null,'left']}
+];
+function layout(items,width,height,roles=[],names=[]) {
+  const entries=items.map(({width:w,height:h},i)=>({i,w:Math.max(w,1),h:Math.max(h,1)}));
+  if (!entries.length) return [];
+  const format=width>height?0:width===height?1:2;
+  const wide=format===0;
+  const reference=referenceScenes.find(scene=>scene.names.every(name=>names.includes(name)));
+  const relations=sceneRelations.map(([first,second,x,y])=>({
+    first:names.indexOf(first),second:names.indexOf(second),x,y
+  })).filter(({first,second})=>first>=0 && second>=0);
+  const area=item=>item.w*item.h;
+  const bySize=[...entries].sort((a,b)=>area(b)-area(a));
+  const anchor=reference?entries[names.indexOf(reference.names[0])]:
+    relations.length?entries[relations[0].first]:bySize.find(item=>roles[item.i]!=='background')||bySize[0];
+  const mainItems=entries.filter(item=>roles[item.i]==='main');
+  const focus=mainItems.length===1?mainItems[0]:null;
+  const placed=new Map([[anchor.i,{...anchor,x:-anchor.w/2,y:-anchor.h/2}]]);
+  function beside(item,base,dx,dy) {
+    return {...item,x:base.x+(base.w-item.w)/2+dx*(base.w+item.w)/2,
+      y:base.y+(base.h-item.h)/2+dy*(base.h+item.h)/2};
   }
-  for (let i=0;i<order.length;i+=rowSize) rows.push(order.slice(i,i+rowSize));
-  const gap=.075*horizontal;
-  const rowGap=.075*vertical;
-  const metrics=rows.map(row=>({w:row.reduce((sum,item)=>sum+item.w,0),h:Math.max(...row.map(item=>item.h))}));
-  const factor=Math.min(
-    ...metrics.map((row,i)=>(horizontal*.84-gap*(rows[i].length-1))/row.w),
-    (vertical*.78-rowGap*(rows.length-1))/metrics.reduce((sum,row)=>sum+row.h,0)
-  );
-  const totalHeight=metrics.reduce((sum,row)=>sum+row.h*factor,0)+rowGap*(rows.length-1);
-  const result=[];
-  let y=(vertical-totalHeight)/2;
-  rows.forEach((row,index)=>{
-    const {w,h}=metrics[index];
-    let x=(horizontal-w*factor-gap*(row.length-1))/2;
-    row.forEach(item=>{
-      const centeredY=y+(h-item.h)*factor/2;
-      result[item.i]={factor,x:transpose?centeredY:x,y:transpose?x:centeredY};
-      x+=item.w*factor+gap;
+  function bounds(rectangles) {
+    const x=Math.min(...rectangles.map(r=>r.x)),y=Math.min(...rectangles.map(r=>r.y));
+    return {x,y,w:Math.max(...rectangles.map(r=>r.x+r.w))-x,h:Math.max(...rectangles.map(r=>r.y+r.h))-y};
+  }
+  function overlap(a,b) {
+    return Math.max(0,Math.min(a.x+a.w,b.x+b.w)-Math.max(a.x,b.x))*
+      Math.max(0,Math.min(a.y+a.h,b.y+b.h)-Math.max(a.y,b.y))/Math.min(area(a),area(b));
+  }
+  if (reference) {
+    const offsets=reference.offsets[format];
+    const pairs=reference.names.length===2?[offsets]:offsets;
+    reference.names.slice(1).forEach((name,i)=>{
+      const index=names.indexOf(name);
+      placed.set(index,beside(entries[index],placed.get(anchor.i),...pairs[i]));
     });
-    y+=h*factor+rowGap;
+  }
+  const directions=wide
+    ?[[.84,.24],[-.84,-.24],[.84,-.30],[-.84,.30],[1,.12],[-1,-.12],
+      [.48,.67],[-.48,-.67],[.48,-.67],[-.48,.67]]
+    :height>width
+      ?[[.44,.74],[-.44,-.75],[-.47,.76],[.48,-.77],[.72,.36],[-.73,-.36]]
+      :[[.68,.57],[-.59,-.68],[-.65,.64],[.62,-.68],[.20,.77],[-.24,-.79]];
+  while (placed.size<entries.length) {
+    const existing=[...placed.values()];
+    let linked;
+    for (const {first,second,x,y} of relations) {
+      if (placed.has(first)===placed.has(second)) continue;
+      const reverse=placed.has(second);
+      const base=placed.get(reverse?second:first);
+      const direction=reverse?-1:1;
+      const candidate=beside(entries[reverse?first:second],base,
+        x*direction*(height>width?.84:1),y*direction);
+      if (existing.every(other=>other===base||
+          overlap(candidate,other)<(roles[other.i]==='background'&&roles[candidate.i]!=='background'?.62:.32))) {
+        linked=candidate;
+        break;
+      }
+    }
+    if (linked) { placed.set(linked.i,linked); continue; }
+    const item=bySize.find(entry=>!placed.has(entry.i));
+    let best,bestScore=Infinity;
+    for (const base of existing) for (const [dx,dy] of directions) {
+      const candidate=beside(item,base,dx,dy);
+      const extents=bounds([...existing,candidate]);
+      const crowding=existing.reduce((sum,other)=>sum+Math.max(0,overlap(candidate,other)-(other===base?.30:.15)),0);
+      const aspectPenalty=wide?Math.abs(Math.log((extents.w/extents.h)/(width/height))):0;
+      const centerDrift=focus && placed.has(focus.i)
+        ?Math.abs(placed.get(focus.i).x+focus.w/2-extents.x-extents.w/2)/extents.w:0;
+      const score=Math.max(extents.w/width,extents.h/height)*(1+10*crowding+1.5*aspectPenalty+1.3*centerDrift);
+      if (score<bestScore) {best=candidate;bestScore=score;}
+    }
+    placed.set(item.i,best);
+  }
+  const rectangles=[...placed.values()];
+  let scene=bounds(rectangles);
+  let cropEdge;
+  if (reference && reference.names.length===rectangles.length) {
+    cropEdge=reference.edges[format];
+    const framingItem=placed.get(reference.names[0]==='Наушники' && format===2?
+      names.indexOf('Растение'):anchor.i);
+    const horizontal=cropEdge==='left'||cropEdge==='right';
+    if (cropEdge) {
+      const crop=horizontal?framingItem.w*.24:framingItem.h*.31;
+      if (cropEdge==='left') scene.x+=crop;
+      if (cropEdge==='top') scene.y+=crop;
+      if (horizontal) scene.w-=crop;
+      else scene.h-=crop;
+    }
+    if (reference.names[0]==='Книга' && reference.names[1]==='Телефон' &&
+        format===2 && items[anchor.i].width>items[names.indexOf('Телефон')].width) {
+      // Keep the page and the phone together in the narrow crop.
+      const phone=placed.get(names.indexOf('Телефон'));
+      scene.w=Math.min(scene.w,phone.x+phone.w*.87-scene.x);
+    }
+  } else if (rectangles.length>=2 && names.some(Boolean)) {
+    const framingSubject=rectangles.find(item=>item.i===anchor.i);
+    const others=bounds(rectangles.filter(item=>item!==framingSubject));
+    const candidates=[
+      {edge:'left',amount:Math.min(framingSubject.w*.22,others.x-scene.x),axis:width},
+      {edge:'right',amount:Math.min(framingSubject.w*.22,scene.x+scene.w-others.x-others.w),axis:width},
+      {edge:'top',amount:Math.min(framingSubject.h*.20,others.y-scene.y),axis:height},
+      {edge:'bottom',amount:Math.min(framingSubject.h*.20,scene.y+scene.h-others.y-others.h),axis:height}
+    ];
+    const crop=candidates.sort((a,b)=>b.amount/b.axis-a.amount/a.axis)[0];
+    // Wide scenes should only bleed sideways when their content reaches the opposite side.
+    const canFillWidth=(scene.w-crop.amount)*height*.95>=width*scene.h;
+    if (crop.amount>0 && (!focus || framingSubject.i!==focus.i) &&
+        (!wide || crop.axis===height || canFillWidth)) {
+      cropEdge=crop.edge;
+      if (cropEdge==='left' || cropEdge==='right') {
+        scene.w-=crop.amount;
+        if (cropEdge==='left') scene.x+=crop.amount;
+      } else {
+        scene.h-=crop.amount;
+        if (cropEdge==='top') scene.y+=crop.amount;
+      }
+    }
+  }
+  const fillWidth=cropEdge==='left'||cropEdge==='right';
+  const fillHeight=cropEdge==='top'||cropEdge==='bottom';
+  let factor=Math.min(width*(fillWidth?1:.96)/scene.w,height*(fillHeight?1:.95)/scene.h);
+  const wideBook=reference?.names[0]==='Книга' && reference.names[1]==='Телефон' &&
+    format===0 && rectangles.length===2;
+  if (wideBook) factor=Math.max(factor,Math.min(width*.91/scene.w,height*1.19/scene.h));
+  const freeX=width-scene.w*factor,freeY=height-scene.h*factor;
+  let originX=cropEdge==='left'?0:cropEdge==='right'?freeX:freeX/2;
+  let originY=cropEdge==='top'?0:cropEdge==='bottom'?freeY:freeY*(wideBook?.55:.5);
+  if (format===1 && reference?.squareFocus && focus?.i===anchor.i && rectangles.length===reference.names.length) {
+    // Frame the hero, allowing the surrounding background objects to bleed.
+    factor=Math.min(width*.82/anchor.w,height*.72/anchor.h);
+    const hero=placed.get(anchor.i);
+    originX=width*.61-(hero.x-scene.x+hero.w/2)*factor;
+    originY=height*.62-(hero.y-scene.y+hero.h/2)*factor;
+  }
+  return entries.map(({i})=>{
+    const item=placed.get(i);
+    return {factor,x:originX+(item.x-scene.x)*factor,y:originY+(item.y-scene.y)*factor};
   });
-  return result;
 }
 function freePosition(preferred,width,height,occupied) {
   const gap=96;
@@ -322,9 +459,16 @@ function register() {
   });
   function postSelection() {
     let size;
-    try { size=JSON.parse(selectedFrame().getPluginData('composition')).size; }
+    let canMove=false;
+    try {
+      const frame=selectedFrame();
+      size=JSON.parse(frame.getPluginData('composition')).size;
+      const selection=figma.currentPage.selection;
+      const node=selection[0];
+      canMove=selection.length===1&&node.parent===frame&&!node.locked&&Boolean(node.getPluginData('subject'));
+    }
     catch { /* The current selection is outside a composition. */ }
-    post('selection',{canExport:Boolean(size)&&figma.currentPage.selection.length===1,
+    post('selection',{canMove,canExport:Boolean(size)&&figma.currentPage.selection.length===1,
       items:size?availableNames(size).map(name=>availableRoles(name,size)):[]});
   }
   async function importCatalogItem({name,size,role,svg}) {
@@ -402,7 +546,11 @@ function register() {
   }
   function resolveSubjects({size,query,mode}) {
     if (!['L','S'].includes(size)) throw Error('Неизвестный размер.');
-    return matchQuery(query,mode,availableNames(size)).map(name=>availableRoles(name,size));
+    const names=matchQuery(query,mode,availableNames(size));
+    return names.map(name=>{
+      const item=availableRoles(name,size);
+      return {...item,defaultRole:item.main?'main':'background'};
+    });
   }
   function build(message, announce=true) {
     const {size,format,query}=message;
@@ -412,7 +560,10 @@ function register() {
     const names=subjects.map(item=>item.name);
     if (!names.length) throw Error('Добавьте хотя бы один предмет.');
     const [width,height]=formats[format];
-    const roles=subjects.map((item,i)=>!item.main || (item.background && message.roles?.[i]==='background')?'background':'main');
+    const roles=subjects.map((item,i)=>{
+      const requested=message.roles?.[i];
+      return (requested==='main'||requested==='background') && item[requested]?requested:item.defaultRole;
+    });
     const position=freePosition({
       x:figma.viewport.center.x-width/2+(message.offsetX||0),
       y:figma.viewport.center.y-height/2+(message.offsetY||0)
@@ -426,7 +577,7 @@ function register() {
       frame.fills=solid(palette?.canvas||(catalog.palettes||schemes)[0].canvas);
       frame.clipsContent=true;
       const items=names.map((name,i)=>copy(name,size,roles[i],palette,frame));
-      const positions=layout(items,width,height,roles);
+      const positions=layout(items,width,height,roles,names);
       frame.setPluginData('composition',JSON.stringify({size,palette,scale:positions[0].factor}));
       items.forEach((node,i)=>{
         const pos=positions[i];
@@ -434,8 +585,10 @@ function register() {
         node.x=pos.x;
         node.y=pos.y;
       });
-      const backgrounds=items.filter((_,i)=>roles[i]==='background');
-      backgrounds.forEach((node,i)=>frame.insertChild(i,node));
+      const layers=items.map((node,i)=>({node,background:roles[i]==='background'}));
+      layers.sort((a,b)=>Number(b.background)-Number(a.background) ||
+        b.node.width*b.node.height-a.node.width*a.node.height);
+      layers.forEach(({node},i)=>frame.insertChild(i,node));
       if (announce) {
         figma.currentPage.selection=[frame];
         figma.viewport.scrollAndZoomIntoView([frame]);
@@ -480,8 +633,9 @@ function register() {
     const children=[...frame.children];
     if (children.some(node=>typeof node.rescale!=='function' || !node.relativeTransform))
       throw Error('Во фрейме есть слой, который нельзя переразложить.');
-    const roles=children.map(node=>JSON.parse(node.getPluginData('subject')||'{}').role);
-    const positions=children.length?layout(children.map(itemBounds),width,height,roles):[];
+    const metadata=children.map(node=>JSON.parse(node.getPluginData('subject')||'{}'));
+    const positions=children.length?layout(children.map(itemBounds),width,height,
+      metadata.map(item=>item.role),metadata.map(item=>item.name)):[];
     if (positions.some(position=>position.factor<.01)) throw Error('Для этого формата предметы пришлось бы уменьшить слишком сильно.');
     const position=freePosition({x:frame.x,y:frame.y},width,height,
       figma.currentPage.children.filter(node=>node!==frame&&node.visible!==false).map(box));
@@ -502,17 +656,30 @@ function register() {
     figma.viewport.scrollAndZoomIntoView([frame]);
     post('status',{text:'Формат изменён: '+width+' × '+height+'. Предметы переразложены.'});
   }
+  function moveSubject(direction) {
+    const frame=selectedFrame();
+    const selection=figma.currentPage.selection;
+    const node=selection[0];
+    if (selection.length!==1 || node.parent!==frame || node.locked || !node.getPluginData('subject'))
+      throw Error('Выделите один предмет внутри композиции.');
+    const steps=new Map([['left',[-10,0]],['right',[10,0]],['up',[0,-10]],['down',[0,10]]]);
+    const step=steps.get(direction);
+    if (!step) throw Error('Выберите направление.');
+    node.x+=step[0];
+    node.y+=step[1];
+    post('status',{text:'Предмет перемещён на 10 px.'});
+  }
   function buildExamples(size) {
     if (!['L','S'].includes(size)) throw Error('Выберите детализацию L или S.');
     const palettes=catalog.palettes||schemes;
     const requests = [
-      {query:'Книга, наушники, пазлы',mode:'names',format:'wide',palette:palettes[0],offsetX:-850},
-      {query:'Идеи и заметки на связи',mode:'meaning',format:'square',palette:palettes[1],offsetX:350},
-      {query:'Растение, папка, монета',mode:'names',format:'vertical',palette:palettes[2],offsetX:1370}
+      {query:'Книга, телефон',mode:'names',format:'wide',palette:palettes[0],offsetX:-850,roles:['main','main']},
+      {query:'Наушники, растение',mode:'names',format:'square',palette:palettes[1],offsetX:350,roles:['main','background']},
+      {query:'Книга, пазлы, ручка',mode:'names',format:'vertical',palette:palettes[2],offsetX:1370,roles:['background','main','main']}
     ];
     const frames=[];
     try {
-      for (const request of requests) frames.push(build({...request,size,roles:['main','background']},false));
+      for (const request of requests) frames.push(build({roles:['main','background'],...request,size},false));
       figma.currentPage.selection=frames;
       figma.viewport.scrollAndZoomIntoView(frames);
       post('status',{text:'Собраны три примера в детализации '+size+'. Для скачивания выберите один фрейм.'});
@@ -605,6 +772,7 @@ function register() {
       if (message.type==='build') build(message);
       if (message.type==='add') addSubject(message);
       if (message.type==='format') applyFormat(message.format);
+      if (message.type==='moveSubject') moveSubject(message.direction);
       if (message.type==='examples') buildExamples(message.size);
       if (message.type==='role'||message.type==='palette') update(message);
       if (message.type==='export') await exportSvg();

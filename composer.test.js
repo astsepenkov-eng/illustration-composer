@@ -51,24 +51,69 @@ test('direct names and an unseen title produce eligible objects',()=>{
   assert.deepEqual(matchQuery('новая группа','names',['Новая группа']),['Новая группа']);
   assert.throws(()=>matchQuery('океан','meaning',['Книга','Телефон']),/не найдены/);
 });
-test('layout shares a scale and follows the frame orientation',()=>{
+test('related objects share a scale and overlap within each frame format',()=>{
   for (const [w,h] of [[1000,1000],[1200,630],[700,1050]]) {
     const items=[{width:1446,height:977},{width:797,height:462}];
-    const result=layout(items,w,h);
+    const result=layout(items,w,h,['main','main'],['Книга','Телефон']);
     assert.equal(result[0].factor,result[1].factor);
-    if (h>w) assert.ok(result[0].y+items[0].height*result[0].factor<result[1].y);
-    if (w>h) assert.ok(result[0].x+items[0].width*result[0].factor<result[1].x);
-    result.forEach((p,i)=>{
-      assert.ok(p.x>=0 && p.y>=0);
-      assert.ok(p.x+items[i].width*p.factor<w);
-      assert.ok(p.y+items[i].height*p.factor<h);
-    });
+    assert.ok(result[1].x+items[1].width*result[1].factor/2>result[0].x+items[0].width*result[0].factor/2);
+    assert.ok(result[1].y+items[1].height*result[1].factor/2<result[0].y+items[0].height*result[0].factor/2);
+    assert.ok(result[1].x<result[0].x+items[0].width*result[0].factor);
+    assert.ok(result[0].y<result[1].y+items[1].height*result[1].factor);
+    const phone=result[1];
+    const phoneRight=phone.x+items[1].width*phone.factor;
+    const allowedTopCrop=w>h?items[1].height*phone.factor*.18:0;
+    assert.ok(phone.x>=0 && phone.y>=-allowedTopCrop && phone.y+items[1].height*phone.factor<=h);
+    if (h>w) assert.ok(phoneRight>w && phone.x<w);
+    else assert.ok(phoneRight<=w+.001);
+    const book=result[0];
+    assert.ok(book.x<0 || book.y<0 || book.x+items[0].width*book.factor>w || book.y+items[0].height*book.factor>h);
   }
 });
 test('new frame clears existing objects and preserves a free position',()=>{
   const occupied=[{x:50,y:100,width:500,height:600},{x:750,y:0,width:200,height:300}];
   assert.deepEqual(freePosition({x:100,y:100},300,400,occupied),{x:1046,y:100});
   assert.deepEqual(freePosition({x:100,y:1000},300,400,occupied),{x:100,y:1000});
+});
+test('wide layout distributes an unfamiliar set across the frame',()=>{
+  const items=[{width:270,height:150},{width:797,height:462},{width:620,height:830},{width:490,height:266}];
+  const width=1200;
+  const result=layout(items,width,630,['main','background','main','main'],
+    ['Монета','Телефон','Растение','Ручка']);
+  const left=Math.min(...result.map(position=>position.x));
+  const right=Math.max(...result.map((position,i)=>position.x+items[i].width*position.factor));
+  assert.ok(right-left>width*.85);
+  assert.ok(Math.abs(left-(width-right))<width*.04);
+  assert.ok(result.every(position=>position.factor===result[0].factor));
+});
+test('reference scenes distinguish surface overlap, foreground and adjacent subjects',()=>{
+  const book={width:1446,height:977}, puzzle={width:500,height:340};
+  const [page,pieces,pen]=layout([book,puzzle,{width:430,height:210}],700,1050,
+    ['background','main','main'],['Книга','Пазлы','Ручка']);
+  assert.ok(page.x+book.width*page.factor>700);
+  assert.ok(pieces.y+puzzle.height*pieces.factor>page.y);
+  assert.ok(pieces.x+puzzle.width*pieces.factor>page.x);
+  const puzzleCenterY=pieces.y+puzzle.height*pieces.factor/2;
+  assert.ok(Math.abs(puzzleCenterY-(page.y+book.height*page.factor/2))<book.height*page.factor*.05);
+  assert.ok(pen.y>pieces.y+puzzle.height*pieces.factor);
+  const [phone,nearby]=layout([{width:797,height:462},puzzle],1200,630,
+    ['main','main'],['Телефон','Пазлы']);
+  assert.ok(phone.x+797*phone.factor<nearby.x);
+  const [headphones,plant]=layout([{width:1000,height:800},{width:430,height:680}],1000,1000,
+    ['main','background'],['Наушники','Растение']);
+  assert.ok(plant.x<headphones.x && plant.y<headphones.y);
+  assert.ok(plant.y+680*plant.factor>headphones.y);
+});
+test('square with headphones frames the main object and lets secondary objects bleed',()=>{
+  const phone={width:797,height:462}, headphones={width:1000,height:800}, plant={width:620,height:830};
+  const [secondary,hero,backdrop]=layout([phone,headphones,plant],1000,1000,
+    ['background','main','background'],['Телефон','Наушники','Растение']);
+  assert.ok(headphones.width*hero.factor>=800);
+  assert.ok(hero.x+headphones.width*hero.factor>1000);
+  assert.ok(backdrop.y<0 && backdrop.y+plant.height*backdrop.factor>0);
+  assert.ok(secondary.y<1000 && secondary.y+phone.height*secondary.factor>1000);
+  assert.equal(hero.factor,secondary.factor);
+  assert.equal(hero.factor,backdrop.factor);
 });
 test('added objects avoid rotated layers and report a full frame',()=>{
   const rotated=itemBounds({width:100,height:60,relativeTransform:[[0,-1,210],[1,0,90]]});
@@ -196,8 +241,9 @@ test('plugin messages scan, assemble, recolor, change role and export',async()=>
   const preview=log.find(msg=>msg.type==='preview');
   assert.equal(preview.id,1);
   assert.equal(preview.items.map(item=>item.name+':'+item.background).join(','),'Книга:true,Телефон:true');
+  assert.equal(preview.items.map(item=>item.defaultRole).join(','),'main,main');
   await figma.ui.onmessage(request);
-  assert.ok(workPage.selection[0].children.every(child=>child.name.endsWith('главный')));
+  assert.equal(workPage.selection[0].children.filter(child=>child.name.endsWith('главный')).length,2);
   assert.equal(log.findLast(msg=>msg.type==='selection').canExport,true);
   await figma.ui.onmessage({...request,roles:['background','main']});
   const frame=workPage.selection[0];
@@ -221,12 +267,17 @@ test('plugin messages scan, assemble, recolor, change role and export',async()=>
   assert.equal(existing.height,previousHeight);
   assert.ok(workPage.selection[0].y>previousHeight);
   assert.match(workPage.selection[0].name,/Телефон.*фон/);
+  const moved=workPage.selection[0];
+  const oldX=moved.x,oldY=moved.y;
+  await figma.ui.onmessage({type:'moveSubject',direction:'left'});
+  assert.equal(moved.x,oldX-10);
+  assert.equal(moved.y,oldY);
   await figma.ui.onmessage({type:'format',format:'vertical'});
   assert.equal(frame.width,700);
   assert.equal(frame.height,1050);
   assert.equal(frame.children.length,3);
   for (const sizeSection of library.children) {
-    for (const name of ['Наушники','Пазлы','Лампа','Ручка','Растение','Папка','Монета']) {
+    for (const name of ['Наушники','Пазлы','Лампа','Ручка','Растение','Папка','Монета','Кошелек']) {
       for (const y of [120,220]) {
         const variant=node('GROUP',name,y);
         variant.clone=()=>editable(name,'GROUP');
@@ -235,6 +286,9 @@ test('plugin messages scan, assemble, recolor, change role and export',async()=>
     }
   }
   await figma.ui.onmessage({type:'scan'});
+  await figma.ui.onmessage({...request,type:'preview',id:2,query:'Пазлы, Растение, Монета, Наушники'});
+  const recommendation=log.find(msg=>msg.type==='preview' && msg.id===2);
+  assert.equal(recommendation.items.map(item=>item.defaultRole).join(','),'main,main,main,main');
   await figma.ui.onmessage({type:'examples',size:'S'});
   assert.deepEqual(Array.from(workPage.selection,frame=>[frame.width,frame.height]),[[1200,630],[1000,1000],[700,1050]]);
   assert.ok(workPage.selection.every(frame=>frame.name.includes(' · S · ')));

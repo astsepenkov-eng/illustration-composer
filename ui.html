@@ -30,6 +30,7 @@ legend { padding:0 4px; font-weight:550 }
 .edit-subsection { margin-top:12px; padding-top:12px }
 .edit-action { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:end; gap:8px }
 .edit-action select, .edit-action button { min-height:36px }
+.position-actions { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px }
 #previewStatus { margin:2px 0 4px }
 small { display:block; color:var(--figma-color-text-secondary,#555) }
 details { margin-top:9px; padding:8px 10px; border:1px solid var(--figma-color-border,#bbb); border-radius:6px }
@@ -113,6 +114,16 @@ details .help { margin:6px 0 9px }
     <button id="add" disabled>Добавить в выбранную композицию</button>
   </fieldset>
   <button id="role" disabled>Сменить роль выделенного предмета</button>
+  <fieldset class="edit-subsection">
+    <legend>Переместить предмет</legend>
+    <small class="help">Выделите предмет в слоях. Перетащите его на холсте или сдвиньте кнопками. Можно вывести часть рисунка за край фрейма.</small>
+    <div class="position-actions">
+      <button type="button" data-move="left" aria-label="Влево на 10 пикселей" disabled>←</button>
+      <button type="button" data-move="up" aria-label="Вверх на 10 пикселей" disabled>↑</button>
+      <button type="button" data-move="down" aria-label="Вниз на 10 пикселей" disabled>↓</button>
+      <button type="button" data-move="right" aria-label="Вправо на 10 пикселей" disabled>→</button>
+    </div>
+  </fieldset>
 </details>
 <details>
   <summary>Материалы</summary>
@@ -175,6 +186,8 @@ let catalogCount=0, busy=false, customPalettes=[], schemes=[], svgURL=null;
 let namesBySize={L:[],S:[]};
 let selectionItems=[];
 let canExport=false;
+let canMove=false;
+const moveButtons=[...document.querySelectorAll('[data-move]')];
 $('editPalette').replaceChildren(...Array.from($('palette').options,option=>option.cloneNode(true)));
 let previewId=0, previewTimer, previewItems=[];
 let activeAction='', alertTimer;
@@ -267,6 +280,7 @@ function updateButtons() {
   $('examples').disabled=busy||!catalogCount;
   for (const id of ['role','paletteAction']) $(id).disabled=busy||!selectionItems.length;
   $('export').disabled=busy||!canExport;
+  for (const button of moveButtons) button.disabled=busy||!canMove;
   $('formatAction').disabled=busy||!selectionItems.length;
   $('add').disabled=busy||!$('subject').value;
   $('build').disabled=busy||!catalogCount||!previewItems.length;
@@ -329,7 +343,7 @@ function renderPreview(message) {
     if (item.main) select.append(new Option(item.background?'Главный':'Главный · фон недоступен','main'));
     if (item.background) select.append(new Option('Фоновый','background'));
     select.disabled=!item.background||!item.main;
-    select.value=!item.main?'background':item.background?(chosenRoles.get(key)||'main'):'main';
+    select.value=item.main && item.background?(chosenRoles.get(key)||item.defaultRole):item.defaultRole;
     select.onchange=()=>chosenRoles.set(key,select.value);
     row.append(select);
     $('subjects').append(row);
@@ -384,6 +398,7 @@ $('mode').onchange=()=>{
 };
 $('paletteAction').onclick=()=>{clearDownload();send('palette',{palette:getPalette('editPalette')});};
 $('role').onclick=()=>{clearDownload();send('role');};
+for (const button of moveButtons) button.onclick=()=>{clearDownload();send('moveSubject',{direction:button.dataset.move});};
 $('subject').onchange=updateAddRole;
 $('add').onclick=()=>{clearDownload();send('add',{name:$('subject').value,role:$('addRole').value});};
 $('formatAction').onclick=()=>{clearDownload();send('format',{format:$('editFormat').value});};
@@ -473,6 +488,7 @@ onmessage=event=>{
   if (message.type==='selection') {
     selectionItems=message.items;
     canExport=message.canExport;
+    canMove=message.canMove;
     const subject=$('subject');
     const previous=subject.value;
     subject.replaceChildren(new Option(selectionItems.length?'Выбрать предмет':'Выделите композицию',''),

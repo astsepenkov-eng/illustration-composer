@@ -367,6 +367,7 @@ function getPalette(id='palette') {
 function clearDownload() {
   if (svgURL) URL.revokeObjectURL(svgURL);
   svgURL=null;
+  $('download').removeAttribute('href');
   $('download').hidden=true;
 }
 $('composer').onsubmit=event=>{
@@ -497,6 +498,10 @@ onmessage=event=>{
     updateAddRole();
   }
   if (message.type==='preview') renderPreview(message);
+  if (message.type==='invalidateExport' && svgURL) {
+    clearDownload();
+    status('Подготовьте SVG заново после изменений.');
+  }
   if (message.type==='status') {
     if (message.scope==='catalog') {
       $('catalogFeedback').textContent=message.text;

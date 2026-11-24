@@ -446,6 +446,7 @@ function register() {
   figma.showUI(__html__,{width:390,height:690,themeColors:true});
   let catalog;
   let busy=false;
+  let pendingExport;
   async function loadCustomPalettes() {
     const saved=await figma.clientStorage.getAsync('customPalettes');
     if (Array.isArray(saved)) return saved.map(validatePalette);
@@ -462,12 +463,14 @@ function register() {
     let canMove=false;
     try {
       const frame=selectedFrame();
+      if (pendingExport && (frame!==pendingExport.frame || figma.currentPage.selection.length!==1))
+        invalidateExport();
       size=JSON.parse(frame.getPluginData('composition')).size;
       const selection=figma.currentPage.selection;
       const node=selection[0];
       canMove=selection.length===1&&node.parent===frame&&!node.locked&&Boolean(node.getPluginData('subject'));
     }
-    catch { /* The current selection is outside a composition. */ }
+    catch { invalidateExport(); }
     post('selection',{canMove,canExport:Boolean(size)&&figma.currentPage.selection.length===1,
       items:size?availableNames(size).map(name=>availableRoles(name,size)):[]});
   }
@@ -704,7 +707,7 @@ function register() {
         const nextRole=roleChange?(role==='main'?'background':'main'):role;
         const original=source(name,size,role);
         const node=copy(name,size,nextRole,palette,frame);
-        replacements.push({old,node,nextRole});
+        replacements.push({old,node,nextRole,locked:old.locked});
         node.rescale(old.width/original.width);
         node.relativeTransform=old.relativeTransform;
         node.opacity=old.opacity;
@@ -714,22 +717,40 @@ function register() {
       for (const {node} of replacements) node.remove();
       throw error;
     }
-    for (const {old,node,nextRole} of replacements) {
+    for (const {old,node,nextRole,locked} of replacements) {
       frame.insertChild(frame.children.indexOf(old),node);
       old.remove();
       if (roleChange) frame.insertChild(nextRole==='background'?0:frame.children.length-1,node);
+      node.locked=locked===true;
     }
     frame.fills=solid(palette?.canvas||(catalog.palettes||schemes)[0].canvas);
     frame.setPluginData('composition',JSON.stringify({...settings,palette}));
     figma.currentPage.selection=roleChange?[replacements[0].node]:[frame];
     post('status',{text:roleChange?'Роль изменена.':'Палитра применена.'});
   }
+  function invalidateExport() {
+    if (!pendingExport) return;
+    pendingExport.page.off('nodechange',invalidateExport);
+    pendingExport=undefined;
+    post('invalidateExport',{});
+  }
   async function exportSvg() {
+    invalidateExport();
     if (figma.currentPage.selection.length!==1) throw Error('Для экспорта выберите одну композицию или один её предмет.');
     const frame=selectedFrame();
-    const raw=repairSvgIds(bytesToText(await frame.exportAsync({format:'SVG',svgIdAttribute:true,svgOutlineText:true})));
-    if (/<(?:\w+:)?image\b/i.test(raw)) throw Error('В SVG обнаружен растр. Проверьте заливки и эффекты перед экспортом.');
-    post('svg',{raw,name:frame.name.replace(/[<>:"/\\|?*]/g,'_')+'.svg'});
+    const page=figma.currentPage;
+    const snapshot={page,frame};
+    page.on('nodechange',invalidateExport);
+    pendingExport=snapshot;
+    try {
+      const raw=repairSvgIds(bytesToText(await frame.exportAsync({format:'SVG',svgIdAttribute:true,svgOutlineText:true})));
+      if (pendingExport!==snapshot) throw Error('Композиция изменилась. Подготовьте SVG заново.');
+      if (/<(?:\w+:)?image\b/i.test(raw)) throw Error('В SVG обнаружен растр. Проверьте заливки и эффекты перед экспортом.');
+      post('svg',{raw,name:frame.name.replace(/[<>:"/\\|?*]/g,'_')+'.svg'});
+    } catch (error) {
+      invalidateExport();
+      throw error;
+    }
   }
   figma.ui.onmessage=async message=>{
     if (message.type==='resizeWindow') {
@@ -780,6 +801,7 @@ function register() {
     finally { busy=false; postSelection(); post('ready',{}); }
   };
   figma.on('selectionchange',postSelection);
+  figma.on('currentpagechange',invalidateExport);
 }
 if (typeof figma!=='undefined') register();
 if (typeof module!=='undefined') module.exports={indexLibrary,matchQuery,layout,validatePalette,recolor,schemes,bytesToText,repairSvgIds,freePosition,readLibraryPalettes,findItemPosition,itemBounds,planItemPlacement};

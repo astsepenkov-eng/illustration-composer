@@ -183,7 +183,12 @@ test('plugin messages scan, assemble, recolor, change role and export',async()=>
     sectionNode.appendChild=child=>sectionNode.children.push(child);
     sectionNode.resizeWithoutConstraints=(w,h)=>{sectionNode.width=w;sectionNode.height=h;};
   }
-  const workPage={selection:[],children:[]};
+  const pageEvents=new Map();
+  const workPage={selection:[],children:[],
+    on(type,callback) { pageEvents.set(type,callback); },
+    off(type,callback) { if (pageEvents.get(type)===callback) pageEvents.delete(type); }
+  };
+  const figmaEvents=new Map();
   const log=[];
   function editable(name,type,width=50,height=40) {
     const data=new Map();
@@ -209,7 +214,8 @@ test('plugin messages scan, assemble, recolor, change role and export',async()=>
   for (const variant of indexLibrary(library).variants.values())
     variant.clone=()=>editable(variant.name,'GROUP');
   const figma={
-    root:{children:[library]},currentPage:workPage,showUI(){},on(){},
+    root:{children:[library]},currentPage:workPage,showUI(){},
+    on(type,callback){ figmaEvents.set(type,callback); },
     clientStorage:{data:new Map(),async getAsync(key){return this.data.get(key);},async setAsync(key,value){this.data.set(key,value);}},
     viewport:{center:{x:0,y:0},scrollAndZoomIntoView(){}},
     ui:{postMessage(event){log.push(event);},resize(width,height){log.push({type:'resized',width,height});}},
@@ -253,11 +259,22 @@ test('plugin messages scan, assemble, recolor, change role and export',async()=>
   workPage.selection=[frame.children[0]];
   await figma.ui.onmessage({type:'role'});
   assert.match(workPage.selection[0].name,/Книга.*главный/);
+  const lockedSubject=workPage.selection[0];
+  lockedSubject.locked=true;
   await figma.ui.onmessage({type:'palette',palette:samplePalette});
   assert.equal(workPage.selection[0],frame);
   assert.equal(frame.children.length,2);
+  assert.equal(frame.children.find(child=>child.name===lockedSubject.name).locked,true);
   await figma.ui.onmessage({type:'export'});
   assert.equal(log.find(msg=>msg.type==='svg').raw,'<svg><g id="book"/><g id="phone"/></svg>');
+  pageEvents.get('nodechange')();
+  assert.equal(log.at(-1).type,'invalidateExport');
+  assert.equal(pageEvents.has('nodechange'),false);
+  await figma.ui.onmessage({type:'export'});
+  workPage.selection=[];
+  figmaEvents.get('selectionchange')();
+  assert.equal(log.at(-2).type,'invalidateExport');
+  workPage.selection=[frame];
   const existing=frame.children[0];
   existing.width=frame.width;
   existing.height=frame.height;
